@@ -21,9 +21,6 @@ the operator's dependency graph out of this binary.
 
 ## Architecture
 
-The plugin is built in layers that land in this order; the commands in `internal/cli`
-are the one layer still to come:
-
 ```
  ssh / Remote-SSH --stdio--> cli.connect
                               |-- kube.Load                kubeconfig, context
@@ -33,6 +30,10 @@ are the one layer still to come:
                               '-- tunnel.Relay             stdin -> frames, frames -> stdout
 ```
 
+- `internal/cli`: the three commands on cobra. `connect` is the ProxyCommand,
+  `ssh-config` the one-time setup, `open` launches VS Code. `root.go` holds the
+  shared flags, the `kubectl workspace` usage prefix and `Main`, which maps signals
+  and errors to the exit code.
 - `internal/sshconfig`: the alias `<workspace>.<namespace>.<cluster>.jk8s` and the
   per-cluster entry `Host *.<cluster>.jk8s`, rendered between marker comments and
   installed into `~/.ssh/config`.
@@ -46,20 +47,24 @@ are the one layer still to come:
 
 ## Invariants
 
+- stdout is the SSH byte stream. `connect` runs under `ssh`; any other byte on
+  stdout corrupts the session. Every diagnostic goes to stderr, prefixed
+  `kubectl-workspace:`.
 - The credential plugin never sees the tunnel. client-go would run the kubeconfig's
   exec plugin on the first request, with no deadline and with the process's stdin,
   which under `ssh` is the SSH stream. `kube.ResolveCredential` runs it itself: no
   stdin, `interactive: false` in `KUBERNETES_EXEC_INFO`, its own process group,
   SIGTERM at the deadline. A plugin that produces nothing before the deadline is a
-  `SignInRequiredError`, one that exits non-zero a `PluginExitError`, so the caller
-  can tell a pending sign-in from a failure; a missing plugin carries the
-  kubeconfig's install hint.
-- The dial watches the context itself, because the WebSocket library stops watching
-  it once the TCP connection is up; a cancelled context ends the dial and the relay
-  without an error of their own.
+  `SignInRequiredError`, one that exits non-zero a `PluginExitError`; both get the
+  `kubectl workspace open` hint, a missing plugin gets the kubeconfig's install hint
+  instead.
+- A signal ends the session quietly. OpenSSH ends a ProxyCommand with SIGHUP.
+  `connect` exits 0 with nothing printed whichever phase the signal interrupts; the
+  dial watches the context itself, because the WebSocket library stops watching it
+  once the TCP connection is up.
 - The token travels in a header. The operator returns `wss://...?token=`; the auth
   middleware also reads `Authorization: Bearer`, and a header stays out of access
-  logs. The token is never logged.
+  logs. The token is never logged, including under `-v`.
 - The alias is parsed from the right. The suffix, the cluster and the namespace are
   single labels; the workspace name may contain dots. The kubeconfig context is not
   in the alias, because EKS context names contain `:` and `/`; the entry carries it,
@@ -77,10 +82,13 @@ are the one layer still to come:
 
 | Directory / file | Purpose |
 |------------------|---------|
+| `cmd/kubectl-workspace/` | Entry point; imports client-go's auth providers |
+| `internal/cli/` | `connect`, `ssh-config`, `open`, shared flags, `Main` |
 | `internal/kube/` | Kubeconfig loading, exec credential plugin with a deadline, `WorkspaceConnection` creation |
 | `internal/sshconfig/` | Alias parsing, entry rendering and installation |
 | `internal/tunnel/` | WebSocket dial with the token in a header, stdin/stdout relay |
 | `internal/testutil/` | Fakes shared by the tests |
+| `test/e2e/` | The system's `ssh` and `sftp` through the plugin against the published sidecar and SSH server images (`e2e` build tag) |
 
 ## Development
 
@@ -91,9 +99,16 @@ are the one layer still to come:
 
 ### Common Tasks
 
+- Build: `make build`
 - Tests: `make test`
+- End to end against the published images: `make test-e2e`, with `CONTAINER_TOOL=finch`
+  on a Mac
 - Lint: `make lint`, with fixes `make lint-fix`
 - Dependencies: `make deps`
+- Run against a sidecar without a cluster: `bin/kubectl-workspace connect --stdio
+  --url ws://127.0.0.1:18080/ <alias>` (`--url` is hidden from `--help`; it skips the
+  operator, and a `token` query parameter, if present, travels in the `Authorization`
+  header as the operator's token would)
 
 ### Tests
 
@@ -101,6 +116,17 @@ Every package tests its contract against the fakes in `internal/testutil`; nothi
 needs a cluster, `ssh` or `kubectl`. `internal/kube` re-executes the test binary as
 the exec credential plugin (`KUBE_TEST_FAKE_PLUGIN`), so the deadline, the process
 group and the `KUBERNETES_EXEC_INFO` contract run against a real subprocess.
+`internal/cli/integration_test.go` runs the plugin itself as a subprocess in the
+ProxyCommand position, against the echo server, and checks the exit code and the
+silence on stderr when the client closes and on SIGHUP.
+
+`test/e2e` runs the real artifacts: the published sidecar image and the SSH server
+from the published carrier image, in two containers sharing one network namespace
+as they share a pod's, with the system's `ssh` and `sftp` running the plugin as the
+ProxyCommand through `--url`. It proves a command, its exit status, a terminal, a
+4 MiB transfer each way and an SFTP round trip. The operator is not in that rig, so
+the credential and connection request are covered by the unit tests only; the path
+through a cluster's ingress belongs to the platform's end-to-end suites.
 
 When adding a test:
 
@@ -109,10 +135,12 @@ When adding a test:
   call sequence that produces it.
 - A fake another package will also need goes in `internal/testutil`; a fake one test
   needs stays in that test.
-- Nothing in the unit tests needs a cluster, `ssh` or `kubectl`.
+- Nothing in the unit tests needs a cluster, `ssh` or `kubectl`; a check that needs
+  the real `ssh` belongs in `test/e2e`.
 
 ### Before Submitting a PR
 
+- `make build`
 - `make lint`
 - `make test`
 
@@ -136,5 +164,7 @@ See [`.github/AGENT.md`](.github/AGENT.md) for the workflows.
 - golangci-lint v2 (see `.golangci.yml`): `revive`'s `exported` rule requires a doc
   comment on exported declarations; `lll` at 120 columns; `goconst` at three
   occurrences.
+- The command is `kubectl workspace`; usage and version output carry the `kubectl`
+  prefix whether the binary is invoked through kubectl or directly.
 - A lint finding is fixed rather than silenced; a `//nolint` directive needs the
   user's agreement first.
