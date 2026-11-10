@@ -15,12 +15,14 @@ in [jupyter-infra/jupyter-k8s#509](https://github.com/jupyter-infra/jupyter-k8s/
 
 Module path: `github.com/jupyter-infra/kubectl-workspace`
 
-No dependency on the operator module or on the proxy module.
+No dependency on the operator module or on the proxy module: the operator's request
+and response types are mirrored in three small structs in `internal/kube`, which keeps
+the operator's dependency graph out of this binary.
 
 ## Architecture
 
-The plugin is built in layers that land in this order; `internal/sshconfig` is the
-first one in the tree:
+The plugin is built in layers that land in this order; the commands in `internal/cli`
+are the one layer still to come:
 
 ```
  ssh / Remote-SSH --stdio--> cli.connect
@@ -34,9 +36,30 @@ first one in the tree:
 - `internal/sshconfig`: the alias `<workspace>.<namespace>.<cluster>.jk8s` and the
   per-cluster entry `Host *.<cluster>.jk8s`, rendered between marker comments and
   installed into `~/.ssh/config`.
+- `internal/kube`: kubeconfig loading with client-go's `clientcmd`, the exec
+  credential plugin run under a deadline, and the `WorkspaceConnection` request to
+  the operator's extension API.
+- `internal/tunnel`: the WebSocket dial and the stdio relay.
+- `internal/testutil`: the fakes the tests share: an operator answering connection
+  requests over TLS, a WebSocket echo server standing in for the sidecar, a
+  kubeconfig writer, an HTTP CONNECT proxy and a listener that never answers.
 
 ## Invariants
 
+- The credential plugin never sees the tunnel. client-go would run the kubeconfig's
+  exec plugin on the first request, with no deadline and with the process's stdin,
+  which under `ssh` is the SSH stream. `kube.ResolveCredential` runs it itself: no
+  stdin, `interactive: false` in `KUBERNETES_EXEC_INFO`, its own process group,
+  SIGTERM at the deadline. A plugin that produces nothing before the deadline is a
+  `SignInRequiredError`, one that exits non-zero a `PluginExitError`, so the caller
+  can tell a pending sign-in from a failure; a missing plugin carries the
+  kubeconfig's install hint.
+- The dial watches the context itself, because the WebSocket library stops watching
+  it once the TCP connection is up; a cancelled context ends the dial and the relay
+  without an error of their own.
+- The token travels in a header. The operator returns `wss://...?token=`; the auth
+  middleware also reads `Authorization: Bearer`, and a header stays out of access
+  logs. The token is never logged.
 - The alias is parsed from the right. The suffix, the cluster and the namespace are
   single labels; the workspace name may contain dots. The kubeconfig context is not
   in the alias, because EKS context names contain `:` and `/`; the entry carries it,
@@ -54,7 +77,10 @@ first one in the tree:
 
 | Directory / file | Purpose |
 |------------------|---------|
+| `internal/kube/` | Kubeconfig loading, exec credential plugin with a deadline, `WorkspaceConnection` creation |
 | `internal/sshconfig/` | Alias parsing, entry rendering and installation |
+| `internal/tunnel/` | WebSocket dial with the token in a header, stdin/stdout relay |
+| `internal/testutil/` | Fakes shared by the tests |
 
 ## Development
 
@@ -71,8 +97,10 @@ first one in the tree:
 
 ### Tests
 
-Every package tests its contract in its own `_test.go` files; nothing needs a
-cluster, `ssh` or `kubectl`.
+Every package tests its contract against the fakes in `internal/testutil`; nothing
+needs a cluster, `ssh` or `kubectl`. `internal/kube` re-executes the test binary as
+the exec credential plugin (`KUBE_TEST_FAKE_PLUGIN`), so the deadline, the process
+group and the `KUBERNETES_EXEC_INFO` contract run against a real subprocess.
 
 When adding a test:
 
