@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
+	golang.org/x/term v0.47.0
 	k8s.io/apimachinery v0.36.2
 	k8s.io/client-go v0.36.2
 )
@@ -22,7 +23,6 @@ require (
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
