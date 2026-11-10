@@ -1,6 +1,8 @@
 name: E2E Tests
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -18,4 +20,5 @@ jobs:
           go-version-file: go.mod
 
       - name: Run E2E tests
+        if: hashFiles('test/e2e/*_test.go') != ''
         run: make test-e2e CONTAINER_TOOL=docker
