@@ -139,8 +139,9 @@ func startRig() (*rig, error) {
 		return r, err
 	}
 
-	// The operator's webhook can still be warming up right after setup, so an apply
-	// it does not answer is retried; one it denies is final.
+	// Right after setup the operator's webhook can still be warming up, and it reads
+	// the template and the strategy from an informer cache that may not have seen
+	// them yet, so a refused apply is retried; a denial for any other reason is final.
 	fixtures, err := os.ReadFile(filepath.Join("..", "testdata", "kind", "fixtures.yaml"))
 	if err != nil {
 		return r, err
@@ -353,19 +354,13 @@ func TestConnectIsRefusedWithoutAccessToTheWorkspace(t *testing.T) {
 func TestConnectIsRefusedWhenTheWorkspaceIsStopped(t *testing.T) {
 	shared.mustKubectl(t, "-n", namespace, "patch", "workspace", workspace, "--type", "merge",
 		"-p", `{"spec":{"desiredStatus":"Stopped"}}`)
+	// The operator answers from an informer cache, so the refusal is polled for
+	// rather than inferred from the Workspace status.
 	if err := harness.Poll(2*time.Minute, 2*time.Second, func() (bool, string) {
-		out, _ := shared.kubectl("-n", namespace, "get", "workspace", workspace, "-o",
-			`jsonpath={.status.conditions[?(@.type=="Available")].status}`)
-		return strings.TrimSpace(out) != "True", "Available=" + strings.TrimSpace(out)
+		_, stderr, code := shared.ssh(t, shared.sshConfig, nil, shared.alias, "true")
+		refused := code != 0 && strings.Contains(stderr, "HTTP 400") && strings.Contains(stderr, "not available")
+		return refused, fmt.Sprintf("exit %d, stderr %q", code, stderr)
 	}); err != nil {
-		t.Fatalf("the workspace did not leave Available: %v", err)
-	}
-
-	_, stderr, code := shared.ssh(t, shared.sshConfig, nil, shared.alias, "true")
-	if code == 0 {
-		t.Fatal("ssh succeeded against a stopped workspace")
-	}
-	if !strings.Contains(stderr, "HTTP 400") || !strings.Contains(stderr, "not available") {
-		t.Errorf("stderr = %q, want the operator's refusal of a workspace that is not available", stderr)
+		t.Errorf("the stopped workspace was not refused with the operator's HTTP 400: %v", err)
 	}
 }
