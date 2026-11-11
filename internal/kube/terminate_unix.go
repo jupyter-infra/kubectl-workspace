@@ -8,6 +8,7 @@ Distributed under the terms of the MIT license
 package kube
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"syscall"
@@ -23,7 +24,13 @@ func setProcessGroup(cmd *exec.Cmd) {
 // terminate asks the plugin to exit; cmd.WaitDelay kills it if it does not.
 func terminate(p *os.Process, group bool) error {
 	if group {
-		return syscall.Kill(-p.Pid, syscall.SIGTERM)
+		err := syscall.Kill(-p.Pid, syscall.SIGTERM)
+		if errors.Is(err, syscall.ESRCH) {
+			// The group is gone: the plugin exited before the deadline was acted on,
+			// which exec only treats as benign under this error.
+			return os.ErrProcessDone
+		}
+		return err
 	}
 	return p.Signal(syscall.SIGTERM)
 }

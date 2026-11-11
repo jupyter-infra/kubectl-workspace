@@ -11,6 +11,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -48,4 +50,15 @@ func TestResolveCredentialTerminatesThePluginsChildrenAtTheDeadline(t *testing.T
 	}
 	_ = syscall.Kill(childPID, syscall.SIGKILL)
 	t.Errorf("the plugin's child %d survived the deadline", childPID)
+}
+
+func TestTerminateReportsAFinishedGroupAsDone(t *testing.T) {
+	cmd := exec.Command("true")
+	setProcessGroup(cmd)
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := terminate(cmd.Process, true); !errors.Is(err, os.ErrProcessDone) {
+		t.Errorf("terminate(finished group) = %v, want os.ErrProcessDone", err)
+	}
 }
