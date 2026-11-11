@@ -64,6 +64,15 @@ func fakePlugin(mode string) int {
 		return 0
 	case "fail":
 		return 3
+	case "resolve-sleeping-child":
+		// Stands in for connect itself: runs a plugin that spawns a child and never
+		// answers, so a test can kill this process and look for the grandchild.
+		target := fakeTarget("sleep-with-child", false)
+		if err := ResolveCredential(context.Background(), target, CredentialOptions{Stderr: os.Stderr, Timeout: time.Minute}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
 	case "wrong-version":
 		fmt.Printf(`{"apiVersion":"client.authentication.k8s.io/v1beta1","kind":"ExecCredential","status":{"token":"t"}}`)
 		return 0
