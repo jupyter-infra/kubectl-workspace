@@ -15,4 +15,6 @@ carries it. The end-to-end rig pulls `ghcr.io/jupyter-infra/workspace-websocket-
 and `ghcr.io/jupyter-infra/remote-access-server` at the tag pinned in
 `test/e2e/plugin_test.go` and `test/e2e/testdata/workspace.Dockerfile`; bump both
 together. The Kind job pins the operator, cert-manager and Traefik chart versions in
-the Makefile and the sidecar image in `test/e2e/testdata/kind/fixtures.yaml`.
+the Makefile, the auth middleware image in `test/e2e/testdata/kind/authmiddleware.yaml`
+(same release as the operator chart), the sidecar image in
+`test/e2e/testdata/kind/fixtures.yaml` and the kind binary in `e2e.yml`.

@@ -72,9 +72,9 @@ cleanup-e2e-kind: ## Delete the Kind cluster of the end-to-end rig.
 	$(KIND) delete cluster --name $(E2E_KIND_CLUSTER)
 
 .PHONY: test-e2e-kind-full
-test-e2e-kind-full: ## setup-e2e-kind, test-e2e-kind and cleanup-e2e-kind in one go.
+test-e2e-kind-full: ## setup-e2e-kind, test-e2e-kind and cleanup-e2e-kind in one go; on a failure the cluster's logs land in bin/kind-logs first.
 	$(MAKE) setup-e2e-kind
-	$(MAKE) test-e2e-kind || { $(MAKE) cleanup-e2e-kind; exit 1; }
+	$(MAKE) test-e2e-kind || { $(KIND) export logs bin/kind-logs --name $(E2E_KIND_CLUSTER); $(MAKE) cleanup-e2e-kind; exit 1; }
 	$(MAKE) cleanup-e2e-kind
 
 .PHONY: lint

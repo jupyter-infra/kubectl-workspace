@@ -25,6 +25,7 @@ jobs:
   kind:
     name: through the operator and traefik on kind
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -36,9 +37,17 @@ jobs:
 
       - name: Install Kind
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
+          curl -fsSLo ./kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
 
       - name: Run the Kind E2E tests
         run: make test-e2e-kind-full CONTAINER_TOOL=docker
+
+      - name: Keep the cluster logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kind-logs
+          path: bin/kind-logs
+          if-no-files-found: ignore
