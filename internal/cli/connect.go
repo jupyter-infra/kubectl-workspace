@@ -7,6 +7,7 @@ package cli
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"time"
@@ -26,6 +27,7 @@ type connectOptions struct {
 	*rootOptions
 	stdio             bool
 	directURL         string
+	caFile            string
 	credentialTimeout time.Duration
 }
 
@@ -57,6 +59,7 @@ credential has expired connect fails fast and names the command to run instead.`
 	cmd.Flags().StringVar(&o.directURL, "url", "",
 		"WebSocket URL to connect to directly instead of asking the cluster (development)")
 	_ = cmd.Flags().MarkHidden("url")
+	cmd.Flags().StringVar(&o.caFile, "ca-file", "", caFileHelp)
 	return cmd
 }
 
@@ -84,11 +87,15 @@ func (o *connectOptions) run(ctx context.Context, host string) error {
 
 // session requests the connection, dials the tunnel and relays until it ends.
 func (o *connectOptions) session(ctx context.Context, alias sshconfig.Alias) error {
+	roots, err := loadRoots(o.caFile)
+	if err != nil {
+		return err
+	}
 	conn, err := o.connection(ctx, alias)
 	if err != nil {
 		return err
 	}
-	ws, err := tunnel.Dial(ctx, conn.URL, conn.Token, o.userAgent)
+	ws, err := tunnel.Dial(ctx, conn.URL, tunnel.DialOptions{Token: conn.Token, UserAgent: o.userAgent, RootCAs: roots})
 	if err != nil {
 		return err
 	}
@@ -143,6 +150,14 @@ func (o *connectOptions) credentialError(err error, contextName string, alias ss
 				"--write", "--credential-timeout", (3*o.credentialTimeout).String())
 	}
 	return fmt.Errorf("%w\n%s", err, msg)
+}
+
+// loadRoots reads the --ca-file bundle; an empty path keeps the system roots.
+func loadRoots(path string) (*x509.CertPool, error) {
+	if path == "" {
+		return nil, nil
+	}
+	return tunnel.LoadRoots(path)
 }
 
 func checkCredentialTimeout(d time.Duration) error {

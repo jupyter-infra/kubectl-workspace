@@ -8,6 +8,8 @@ package cli
 import (
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -289,5 +291,27 @@ func TestConnectNeverWritesTheTokenToStderr(t *testing.T) {
 	}
 	if !strings.Contains(r.stderr.String(), "connection granted") {
 		t.Errorf("stderr = %q, want the verbose progress lines", r.stderr.String())
+	}
+}
+
+func TestConnectTrustsTheCAFile(t *testing.T) {
+	echo := testutil.NewTLSEchoServer(t)
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, echo.CAPEM(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := startConnect(t, "connect", "--stdio", "--url", echo.URL("/").String(), "--ca-file", caFile, alias)
+	if got := r.echo(t, "through the private ca"); got != "through the private ca" {
+		t.Errorf("echoed %q", got)
+	}
+	if err := r.finish(t); err != nil {
+		t.Errorf("connect returned %v", err)
+	}
+}
+
+func TestConnectRejectsAMissingCAFileBeforeConnecting(t *testing.T) {
+	_, err := run(t, "connect", "--stdio", "--url", "wss://127.0.0.1:1/", "--ca-file", "/nonexistent/ca.pem", alias)
+	if err == nil || !strings.Contains(err.Error(), "CA file") {
+		t.Errorf("error = %v, want the CA file named", err)
 	}
 }

@@ -29,6 +29,10 @@ const programName = "kubectl-workspace"
 // goosWindows is runtime.GOOS on Windows.
 const goosWindows = "windows"
 
+// caFileHelp describes --ca-file, shared by connect and ssh-config.
+const caFileHelp = "PEM bundle with the certificate authority of the cluster's ingress, " +
+	"trusted instead of the system roots"
+
 // Streams are the process's standard streams, injectable for tests.
 type Streams struct {
 	In  io.Reader

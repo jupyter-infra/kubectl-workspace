@@ -141,6 +141,13 @@ Host keys are trusted on first use (`StrictHostKeyChecking accept-new`). A works
 that was deleted and recreated has a new key, which OpenSSH refuses until you run
 `ssh-keygen -R <workspace>.<namespace>.<cluster>.jk8s`.
 
+## Private certificate authorities
+
+The plugin verifies the ingress certificate against the system roots. When the
+certificate comes from a private certificate authority, pass its PEM bundle to
+`kubectl workspace ssh-config --write --ca-file <bundle>`; the entry carries the path
+and `connect` verifies against that bundle instead.
+
 ## Cluster requirements
 
 | kubectl-workspace | jupyter-k8s operator | ws-proxy sidecar |

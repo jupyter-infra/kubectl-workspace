@@ -196,3 +196,30 @@ func shellWords(line string) []string {
 	}
 	return words
 }
+
+func TestSSHConfigWritesTheCAFileIntoTheEntry(t *testing.T) {
+	echo := testutil.NewTLSEchoServer(t)
+	dir := t.TempDir()
+	caFile := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(caFile, echo.CAPEM(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kubeconfig := staticKubeconfig(t)
+
+	stdout, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", "/opt/kw", "--ca-file", caFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "--ca-file "+caFile+" %h") {
+		t.Errorf("entry =\n%s\nwant the CA file in the ProxyCommand", stdout)
+	}
+
+	junk := filepath.Join(dir, "junk.pem")
+	if err := os.WriteFile(junk, []byte("not a certificate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", "/opt/kw", "--ca-file", junk)
+	if err == nil || !strings.Contains(err.Error(), "no certificates") {
+		t.Errorf("error = %v, want the empty bundle refused before the entry is written", err)
+	}
+}

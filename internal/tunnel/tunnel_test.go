@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +33,7 @@ const testPath = "/workspaces/ns/ws/ssh-ws"
 func TestDialSendsTheTokenInAHeaderOnly(t *testing.T) {
 	echo := testutil.NewEchoServer(t)
 
-	ws, err := Dial(context.Background(), echo.URL(testPath), "secret-token", "kubectl-workspace/test")
+	ws, err := Dial(context.Background(), echo.URL(testPath), DialOptions{Token: "secret-token", UserAgent: "kubectl-workspace/test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +56,7 @@ func TestDialTrustsSystemRootsOnly(t *testing.T) {
 	defer server.Close()
 	u, _ := url.Parse("wss" + strings.TrimPrefix(server.URL, "https") + testPath)
 
-	_, err := Dial(context.Background(), u, "t", "")
+	_, err := Dial(context.Background(), u, DialOptions{Token: "t"})
 	var verification *tls.CertificateVerificationError
 	if !errors.As(err, &verification) {
 		t.Errorf("error = %v, want the self-signed certificate to fail verification", err)
@@ -69,7 +71,7 @@ func TestDialHonorsTheProxyEnvironment(t *testing.T) {
 	t.Cleanup(func() { proxyFromEnvironment = previous })
 
 	u, _ := url.Parse("ws://workspace.example.test:8443" + testPath)
-	ws, err := Dial(context.Background(), u, "secret-token", "")
+	ws, err := Dial(context.Background(), u, DialOptions{Token: "secret-token"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +103,7 @@ func TestDialReportsARefusedHandshake(t *testing.T) {
 			defer server.Close()
 			u, _ := url.Parse("ws" + strings.TrimPrefix(server.URL, "http") + "/")
 
-			_, err := Dial(context.Background(), u, "t", "")
+			_, err := Dial(context.Background(), u, DialOptions{Token: "t"})
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("error = %v, want it to mention %q", err, tt.wantErr)
 			}
@@ -115,7 +117,7 @@ func TestDialReturnsWhenCancelledDuringTheHandshake(t *testing.T) {
 	time.AfterFunc(200*time.Millisecond, cancel)
 
 	start := time.Now()
-	_, err := Dial(ctx, u, "t", "")
+	_, err := Dial(ctx, u, DialOptions{Token: "t"})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("Dial returned %v, want context.Canceled", err)
 	}
@@ -126,7 +128,7 @@ func TestDialReturnsWhenCancelledDuringTheHandshake(t *testing.T) {
 
 func TestDialReportsAnUnreachableServer(t *testing.T) {
 	u, _ := url.Parse("ws://127.0.0.1:1/")
-	_, err := Dial(context.Background(), u, "", "")
+	_, err := Dial(context.Background(), u, DialOptions{})
 	if err == nil || !strings.Contains(err.Error(), "failed to connect to ws://127.0.0.1:1/") {
 		t.Errorf("error = %v", err)
 	}
@@ -143,7 +145,7 @@ type relayHarness struct {
 
 func startRelay(t *testing.T, echo *testutil.EchoServer) *relayHarness {
 	t.Helper()
-	ws, err := Dial(context.Background(), echo.URL(testPath), "", "")
+	ws, err := Dial(context.Background(), echo.URL(testPath), DialOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,5 +378,36 @@ func TestCloseReasonIgnoresOtherErrors(t *testing.T) {
 	abnormal := &websocket.CloseError{Code: websocket.CloseAbnormalClosure, Text: "unexpected EOF"}
 	if _, ok := CloseReason(abnormal); ok {
 		t.Error("an abnormal close is not a normal close reason")
+	}
+}
+
+func TestDialTrustsTheGivenRoots(t *testing.T) {
+	echo := testutil.NewTLSEchoServer(t)
+	ws, err := Dial(context.Background(), echo.URL(testPath), DialOptions{RootCAs: echo.CertPool()})
+	if err != nil {
+		t.Fatalf("Dial with the server's own root: %v", err)
+	}
+	_ = ws.Close()
+}
+
+func TestLoadRoots(t *testing.T) {
+	echo := testutil.NewTLSEchoServer(t)
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(bundle, echo.CAPEM(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRoots(bundle); err != nil {
+		t.Errorf("LoadRoots(bundle) = %v", err)
+	}
+	junk := filepath.Join(dir, "junk.pem")
+	if err := os.WriteFile(junk, []byte("not a certificate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRoots(junk); err == nil || !strings.Contains(err.Error(), "no certificates") {
+		t.Errorf("LoadRoots(junk) = %v, want the empty bundle named", err)
+	}
+	if _, err := LoadRoots(filepath.Join(dir, "missing.pem")); err == nil {
+		t.Error("LoadRoots(missing) = nil, want an error")
 	}
 }

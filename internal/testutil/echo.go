@@ -6,6 +6,8 @@ Distributed under the terms of the MIT license
 package testutil
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -43,6 +45,28 @@ func NewEchoServer(t *testing.T) *EchoServer {
 	e.server = httptest.NewServer(e)
 	t.Cleanup(e.server.Close)
 	return e
+}
+
+// NewTLSEchoServer starts an echo server behind TLS with a certificate of its own,
+// standing in for an ingress whose certificate the system roots do not know.
+func NewTLSEchoServer(t *testing.T) *EchoServer {
+	t.Helper()
+	e := &EchoServer{}
+	e.server = httptest.NewTLSServer(e)
+	t.Cleanup(e.server.Close)
+	return e
+}
+
+// CertPool returns a pool that trusts a TLS echo server's certificate.
+func (e *EchoServer) CertPool() *x509.CertPool {
+	pool := x509.NewCertPool()
+	pool.AddCert(e.server.Certificate())
+	return pool
+}
+
+// CAPEM returns a TLS echo server's certificate as a PEM bundle.
+func (e *EchoServer) CAPEM() []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.server.Certificate().Raw})
 }
 
 // SetOnConn replaces the echo loop for connections accepted from now on.

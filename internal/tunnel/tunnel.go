@@ -9,12 +9,15 @@ package tunnel
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -52,8 +55,31 @@ var readTimeout = 90 * time.Second
 // tests can route through a proxy of their own.
 var proxyFromEnvironment = http.ProxyFromEnvironment
 
+// DialOptions is what the dial puts on the wire besides the URL.
+type DialOptions struct {
+	// Token travels in the Authorization header.
+	Token     string
+	UserAgent string
+	// RootCAs, when set, is trusted for the TLS handshake instead of the system
+	// roots, for an ingress behind a private certificate authority.
+	RootCAs *x509.CertPool
+}
+
+// LoadRoots reads a PEM bundle into a certificate pool.
+func LoadRoots(path string) (*x509.CertPool, error) {
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the CA file: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("no certificates in the CA file %s", path)
+	}
+	return pool, nil
+}
+
 // Dial opens the WebSocket with the token in the Authorization header.
-func Dial(ctx context.Context, u *url.URL, token, userAgent string) (*websocket.Conn, error) {
+func Dial(ctx context.Context, u *url.URL, opts DialOptions) (*websocket.Conn, error) {
 	var stopWatch func() bool
 	dialer := websocket.Dialer{
 		Proxy:            proxyFromEnvironment,
@@ -69,12 +95,15 @@ func Dial(ctx context.Context, u *url.URL, token, userAgent string) (*websocket.
 			return conn, nil
 		},
 	}
-	header := http.Header{}
-	if token != "" {
-		header.Set("Authorization", "Bearer "+token)
+	if opts.RootCAs != nil {
+		dialer.TLSClientConfig = &tls.Config{RootCAs: opts.RootCAs, MinVersion: tls.VersionTLS12}
 	}
-	if userAgent != "" {
-		header.Set("User-Agent", userAgent)
+	header := http.Header{}
+	if opts.Token != "" {
+		header.Set("Authorization", "Bearer "+opts.Token)
+	}
+	if opts.UserAgent != "" {
+		header.Set("User-Agent", opts.UserAgent)
 	}
 	ws, resp, err := dialer.DialContext(ctx, u.String(), header)
 	if stopWatch != nil {

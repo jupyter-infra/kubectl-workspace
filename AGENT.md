@@ -40,7 +40,8 @@ the operator's dependency graph out of this binary.
 - `internal/kube`: kubeconfig loading with client-go's `clientcmd`, the exec
   credential plugin run under a deadline, and the `WorkspaceConnection` request to
   the operator's extension API.
-- `internal/tunnel`: the WebSocket dial and the stdio relay.
+- `internal/tunnel`: the WebSocket dial, verifying TLS against the system roots or the
+  `--ca-file` bundle, and the stdio relay.
 - `internal/testutil`: the fakes the tests share: an operator answering connection
   requests over TLS, a WebSocket echo server standing in for the sidecar, a
   kubeconfig writer, an HTTP CONNECT proxy and a listener that never answers.

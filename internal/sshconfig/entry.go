@@ -33,6 +33,8 @@ type Entry struct {
 	User string
 	// CredentialTimeout, when set, is written as connect's --credential-timeout.
 	CredentialTimeout time.Duration
+	// CAFile, when set, is written as connect's --ca-file.
+	CAFile string
 	// Windows selects the argument quoting for OpenSSH on Windows.
 	Windows bool
 }
@@ -50,7 +52,7 @@ var userPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 func (e Entry) Validate() error {
 	fields := []struct{ name, value string }{
 		{"cluster name", e.Cluster}, {"context name", e.Context}, {"kubeconfig path", e.Kubeconfig},
-		{"command path", e.Command}, {"user name", e.User},
+		{"command path", e.Command}, {"user name", e.User}, {"CA file path", e.CAFile},
 	}
 	for _, field := range fields {
 		if strings.ContainsAny(field.value, "\r\n") {
@@ -75,6 +77,9 @@ func (e Entry) Render() string {
 		args = append(args, "--kubeconfig", quoteArg(e.Kubeconfig, e.Windows))
 	}
 	args = append(args, "--context", quoteArg(e.Context, e.Windows))
+	if e.CAFile != "" {
+		args = append(args, "--ca-file", quoteArg(e.CAFile, e.Windows))
+	}
 	if e.CredentialTimeout > 0 {
 		args = append(args, "--credential-timeout", e.CredentialTimeout.String())
 	}

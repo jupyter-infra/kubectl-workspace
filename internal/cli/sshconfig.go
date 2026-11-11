@@ -18,6 +18,7 @@ import (
 
 	"github.com/jupyter-infra/kubectl-workspace/internal/kube"
 	"github.com/jupyter-infra/kubectl-workspace/internal/sshconfig"
+	"github.com/jupyter-infra/kubectl-workspace/internal/tunnel"
 )
 
 type sshConfigOptions struct {
@@ -27,6 +28,7 @@ type sshConfigOptions struct {
 	sshConfigFile string
 	command       string
 	user          string
+	caFile        string
 	// credentialTimeout is written into the entry when it differs from connect's default.
 	credentialTimeout time.Duration
 }
@@ -54,6 +56,7 @@ DNS label; contexts named like EKS ARNs need --cluster-name.`,
 	cmd.Flags().StringVar(&o.command, "command", "",
 		"path of the kubectl-workspace binary for the ProxyCommand (default this binary)")
 	cmd.Flags().StringVar(&o.user, "user", sshconfig.DefaultUser, "SSH user name in the entry")
+	cmd.Flags().StringVar(&o.caFile, "ca-file", "", caFileHelp+"; written into the entry")
 	cmd.Flags().DurationVar(&o.credentialTimeout, "credential-timeout", defaultCredentialTimeout,
 		"how long connect may wait for the kubeconfig's credential plugin; written into the entry when it differs")
 	return cmd
@@ -91,6 +94,15 @@ func (o *sshConfigOptions) run() error {
 	}
 	if o.credentialTimeout != defaultCredentialTimeout {
 		entry.CredentialTimeout = o.credentialTimeout
+	}
+	if o.caFile != "" {
+		// Read now, so a wrong path fails here and not in every ssh session.
+		if _, err := tunnel.LoadRoots(o.caFile); err != nil {
+			return err
+		}
+		if entry.CAFile, err = filepath.Abs(o.caFile); err != nil {
+			return fmt.Errorf("failed to resolve the CA file path %q: %w", o.caFile, err)
+		}
 	}
 	if err := entry.Validate(); err != nil {
 		return err

@@ -144,3 +144,11 @@ func TestValidateRejectsLineBreaks(t *testing.T) {
 		t.Errorf("Validate() on a plain entry = %v", err)
 	}
 }
+
+func TestRenderWritesTheCAFile(t *testing.T) {
+	e := testEntry()
+	e.CAFile = "/etc/kw/ingress-ca.pem"
+	if got := e.Render(); !strings.Contains(got, "--context prod --ca-file /etc/kw/ingress-ca.pem %h") {
+		t.Errorf("entry =\n%s\nwant the CA file in the ProxyCommand", got)
+	}
+}
