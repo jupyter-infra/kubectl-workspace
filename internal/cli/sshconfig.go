@@ -74,11 +74,9 @@ func (o *sshConfigOptions) run() error {
 	if err != nil {
 		return err
 	}
-	command := o.command
-	if command == "" {
-		if command, err = executablePath(); err != nil {
-			return err
-		}
+	command, err := commandForEntry(o.command)
+	if err != nil {
+		return err
 	}
 	kubeconfig, err := o.kubeconfigForEntry()
 	if err != nil {
@@ -161,6 +159,24 @@ func clusterName(flag, contextName string) (string, error) {
 // under its own name, that path is preferred: krew's PATH entry is a symlink into
 // a versioned store directory, and the resolved path would break at the next
 // upgrade.
+// commandForEntry resolves --command for the ProxyCommand line: this binary when
+// empty, a path made absolute because OpenSSH runs the command from its own working
+// directory, and a bare name left to the PATH lookup at connection time.
+func commandForEntry(command string) (string, error) {
+	switch {
+	case command == "":
+		return executablePath()
+	case strings.ContainsAny(command, `/\`):
+		abs, err := filepath.Abs(command)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve the command path %q: %w", command, err)
+		}
+		return abs, nil
+	default:
+		return command, nil
+	}
+}
+
 func executablePath() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {

@@ -223,3 +223,27 @@ func TestSSHConfigWritesTheCAFileIntoTheEntry(t *testing.T) {
 		t.Errorf("error = %v, want the empty bundle refused before the entry is written", err)
 	}
 }
+
+func TestSSHConfigResolvesTheCommandPath(t *testing.T) {
+	kubeconfig := staticKubeconfig(t)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", "bin/kubectl-workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "ProxyCommand " + filepath.Join(cwd, "bin", "kubectl-workspace") + " connect"; !strings.Contains(stdout, want) {
+		t.Errorf("entry =\n%s\nwant the relative path made absolute: %s", stdout, want)
+	}
+
+	stdout, err = run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", "kubectl-workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "ProxyCommand kubectl-workspace connect") {
+		t.Errorf("entry =\n%s\nwant a bare name left to the PATH lookup", stdout)
+	}
+}
