@@ -32,6 +32,20 @@ func Command(name string, args ...string) (string, error) {
 	return string(out), err
 }
 
+// Output runs name with args and returns its stdout alone; stderr goes into the error.
+func Output(name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("%w\n%s", err, stderr.String())
+	}
+	return string(out), nil
+}
+
 // CommandWithStdin runs name with args, feeding stdin, and returns its combined output.
 func CommandWithStdin(stdin string, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)

@@ -86,12 +86,12 @@ func startRig() (*rig, error) {
 	}
 	r.dir = dir
 
-	// The cluster's admin kubeconfig in a file of the rig's own, so the user's
-	// kubeconfig is never read or written.
+	// The cluster's admin kubeconfig in a file of the rig's own: the user's
+	// kubeconfig is read once here and never written.
 	r.kubeconfig = filepath.Join(dir, "kubeconfig")
-	out, err := harness.Command("kubectl", "config", "view", "--raw", "--minify", "--flatten", "--context", r.context)
+	out, err := harness.Output("kubectl", "config", "view", "--raw", "--minify", "--flatten", "--context", r.context)
 	if err != nil {
-		return r, fmt.Errorf("exporting the kubeconfig for %s: %v\n%s", r.context, err, out)
+		return r, fmt.Errorf("exporting the kubeconfig for %s: %v", r.context, err)
 	}
 	if err := os.WriteFile(r.kubeconfig, []byte(out), 0o600); err != nil {
 		return r, err
