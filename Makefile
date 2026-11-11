@@ -44,25 +44,24 @@ E2E_HELM := helm --kube-context kind-$(E2E_KIND_CLUSTER)
 .PHONY: setup-e2e-kind
 setup-e2e-kind: ## Create the Kind cluster with cert-manager, the operator, the auth middleware and Traefik, and load the workspace image.
 	@$(KIND) get clusters 2>/dev/null | grep -qx '$(E2E_KIND_CLUSTER)' || $(KIND) create cluster --name $(E2E_KIND_CLUSTER) --wait 90s
-	helm repo add jetstack https://charts.jetstack.io --force-update
-	helm repo add traefik https://traefik.github.io/charts --force-update
-	$(E2E_HELM) upgrade --install cert-manager jetstack/cert-manager --version $(E2E_CERT_MANAGER_CHART_VERSION) \
+	$(E2E_HELM) upgrade --install cert-manager cert-manager --repo https://charts.jetstack.io --version $(E2E_CERT_MANAGER_CHART_VERSION) \
 		--namespace cert-manager --create-namespace --set crds.enabled=true --set startupapicheck.enabled=false \
 		--wait --timeout 180s
 	$(E2E_HELM) upgrade --install jupyter-k8s oci://ghcr.io/jupyter-infra/charts/jupyter-k8s --version $(E2E_OPERATOR_CHART_VERSION) \
 		--namespace jupyter-k8s-system --create-namespace --set extensionApi.jwtSecret.enable=true --wait --timeout 240s
 	$(E2E_KUBECTL) wait --for=condition=Available --timeout=180s apiservice/v1alpha1.connection.workspace.jupyter.org
 	$(E2E_KUBECTL) apply -f test/e2e/testdata/kind/authmiddleware.yaml
-	$(E2E_HELM) upgrade --install traefik traefik/traefik --version $(E2E_TRAEFIK_CHART_VERSION) --namespace traefik --create-namespace \
+	$(E2E_HELM) upgrade --install traefik traefik --repo https://traefik.github.io/charts --version $(E2E_TRAEFIK_CHART_VERSION) \
+		--namespace traefik --create-namespace \
 		--set service.spec.type=ClusterIP --set providers.kubernetesCRD.allowCrossNamespace=true \
 		--set tlsStore.default.defaultCertificate.secretName=traefik-e2e-tls --wait --timeout 180s
 	$(E2E_KUBECTL) apply -f test/e2e/testdata/kind/traefik-tls.yaml
 	$(E2E_KUBECTL) -n traefik wait --for=condition=Ready --timeout=120s certificate/traefik-e2e
 	$(E2E_KUBECTL) -n jupyter-k8s-system rollout status deployment/authmiddleware --timeout=180s
 	$(CONTAINER_TOOL) build -t $(E2E_WORKSPACE_IMAGE) -f test/e2e/testdata/workspace.Dockerfile test/e2e/testdata
-	mkdir -p $(HOME)/.cache/kubectl-workspace
-	$(CONTAINER_TOOL) save $(E2E_WORKSPACE_IMAGE) -o $(HOME)/.cache/kubectl-workspace/e2e-workspace.tar
-	$(KIND) load image-archive $(HOME)/.cache/kubectl-workspace/e2e-workspace.tar --name $(E2E_KIND_CLUSTER)
+	mkdir -p bin
+	$(CONTAINER_TOOL) save $(E2E_WORKSPACE_IMAGE) -o bin/e2e-workspace.tar
+	$(KIND) load image-archive bin/e2e-workspace.tar --name $(E2E_KIND_CLUSTER)
 
 .PHONY: test-e2e-kind
 test-e2e-kind: ## Run the plugin against the Kind rig through the operator, the auth middleware and Traefik (after setup-e2e-kind).
