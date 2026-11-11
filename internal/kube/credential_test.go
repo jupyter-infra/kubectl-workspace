@@ -15,11 +15,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
-	"k8s.io/apimachinery/pkg/runtime"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	clientauthv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 	"k8s.io/client-go/rest"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -91,7 +92,7 @@ func fakeTarget(mode string, provideClusterInfo bool) *Target {
 				APIVersion:         testAPIVersion,
 				Env:                []clientcmdapi.ExecEnvVar{{Name: fakePluginEnv, Value: mode}},
 				ProvideClusterInfo: provideClusterInfo,
-				Config:             &runtime.Unknown{Raw: []byte(`{"region":"us-west-2"}`)},
+				Config:             &k8sruntime.Unknown{Raw: []byte(`{"region":"us-west-2"}`)},
 				InstallHint:        "install it from example.invalid",
 				InteractiveMode:    clientcmdapi.IfAvailableExecInteractiveMode,
 			},
@@ -358,8 +359,15 @@ func TestResolveCredentialReportsAMissingPluginWithTheInstallHint(t *testing.T) 
 
 func TestResolveCredentialReportsAPluginThatCannotStart(t *testing.T) {
 	target := fakeTarget("token", false)
-	// A directory is found on disk but cannot be executed.
-	target.Config.ExecProvider.Command = t.TempDir()
+	// A file that exists but cannot run: no execute bit on Unix, not a program on Windows.
+	plugin := filepath.Join(t.TempDir(), "plugin")
+	if runtime.GOOS == "windows" {
+		plugin += ".exe"
+	}
+	if err := os.WriteFile(plugin, []byte("not a program"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target.Config.ExecProvider.Command = plugin
 
 	err := ResolveCredential(context.Background(), target, CredentialOptions{})
 	if err == nil || !strings.Contains(err.Error(), "failed to run credential plugin") {

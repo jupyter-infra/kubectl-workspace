@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ import (
 
 func TestSSHConfigWritesANonDefaultCredentialTimeout(t *testing.T) {
 	kubeconfig := staticKubeconfig(t)
-	stdout, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", "/opt/kw", "--credential-timeout", "15s")
+	stdout, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", kwCommand, "--credential-timeout", "15s")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +27,7 @@ func TestSSHConfigWritesANonDefaultCredentialTimeout(t *testing.T) {
 		t.Errorf("entry =\n%s\nwant the timeout in the ProxyCommand", stdout)
 	}
 
-	stdout, err = run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", "/opt/kw")
+	stdout, err = run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", kwCommand)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +35,7 @@ func TestSSHConfigWritesANonDefaultCredentialTimeout(t *testing.T) {
 		t.Errorf("entry =\n%s\nwant connect's default left implicit", stdout)
 	}
 
-	_, err = run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", "/opt/kw", "--credential-timeout", "0")
+	_, err = run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", kwCommand, "--credential-timeout", "0")
 	if err == nil || !strings.Contains(err.Error(), "--credential-timeout must be positive") {
 		t.Errorf("error = %v", err)
 	}
@@ -42,12 +43,13 @@ func TestSSHConfigWritesANonDefaultCredentialTimeout(t *testing.T) {
 
 func TestSSHConfigRendersTheEntryForTheContext(t *testing.T) {
 	kubeconfig := staticKubeconfig(t)
-	stdout, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", "/opt/kubectl-workspace")
+	stdout, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", kwCommand)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := sshconfig.Entry{
-		Cluster: "dev", Context: "dev", Kubeconfig: kubeconfig, Command: "/opt/kubectl-workspace", User: "jovyan",
+		Cluster: "dev", Context: "dev", Kubeconfig: kubeconfig, Command: kwCommand, User: "jovyan",
+		Windows: runtime.GOOS == "windows",
 	}.Render()
 	if stdout != want {
 		t.Errorf("stdout =\n%s\nwant\n%s", stdout, want)
@@ -57,17 +59,18 @@ func TestSSHConfigRendersTheEntryForTheContext(t *testing.T) {
 func TestSSHConfigNeedsAClusterNameForAnARNContext(t *testing.T) {
 	kubeconfig := staticKubeconfig(t)
 
-	_, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--context", testutil.ARNContext, "--command", "/opt/kw")
+	_, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--context", testutil.ARNContext, "--command", kwCommand)
 	if err == nil || !strings.Contains(err.Error(), "--cluster-name") {
 		t.Fatalf("error = %v, want a hint to pass --cluster-name", err)
 	}
 
 	stdout, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--context", testutil.ARNContext,
-		"--command", "/opt/kw", "--cluster-name", "dev")
+		"--command", kwCommand, "--cluster-name", "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantLine := "ProxyCommand /opt/kw connect --stdio --kubeconfig " + kubeconfig + " --context " + testutil.ARNContext + " %h"
+	wantLine := "ProxyCommand " + kwCommand + " connect --stdio --kubeconfig " + kubeconfig +
+		" --context " + testutil.ARNContext + " %h"
 	if !strings.Contains(stdout, "Host *.dev.jk8s\n") || !strings.Contains(stdout, wantLine) {
 		t.Errorf("stdout =\n%s\nwant Host *.dev.jk8s and %q", stdout, wantLine)
 	}
@@ -92,7 +95,7 @@ func TestSSHConfigWritesTheKubeconfigIntoTheEntry(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("KUBECONFIG", tt.env)
-			stdout, stderr, err := runWithStderr(t, "ssh-config", "--command", "/opt/kw")
+			stdout, stderr, err := runWithStderr(t, "ssh-config", "--command", kwCommand)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,7 +118,7 @@ func TestInstalledEntryRunsConnect(t *testing.T) {
 	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
 	configFile := filepath.Join(t.TempDir(), ".ssh", "config")
 	stdout, err := run(t, "ssh-config", "--write", "--kubeconfig", kubeconfig, "--context", testutil.ARNContext,
-		"--cluster-name", "dev", "--command", "/opt/kw", "--ssh-config-file", configFile)
+		"--cluster-name", "dev", "--command", kwCommand, "--ssh-config-file", configFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +136,7 @@ func TestInstalledEntryRunsConnect(t *testing.T) {
 			proxyCommand = shellWords(rest)
 		}
 	}
-	if len(proxyCommand) == 0 || proxyCommand[0] != "/opt/kw" {
+	if len(proxyCommand) == 0 || proxyCommand[0] != kwCommand {
 		t.Fatalf("no ProxyCommand line in\n%s", content)
 	}
 	args := proxyCommand[1:]
@@ -197,7 +200,7 @@ func TestSSHConfigWritesTheCAFilePathAbsoluteIntoTheEntry(t *testing.T) {
 	file := filepath.Join(dir, "ssh_config")
 
 	_, err := run(t, "ssh-config", "--write", "--ssh-config-file", file, "--kubeconfig", kubeconfig,
-		"--command", "/opt/kw", "--ca-file", "junk.pem")
+		"--command", kwCommand, "--ca-file", "junk.pem")
 	if err == nil || !strings.Contains(err.Error(), "no certificates") {
 		t.Errorf("error = %v, want the empty bundle refused", err)
 	}
@@ -206,7 +209,7 @@ func TestSSHConfigWritesTheCAFilePathAbsoluteIntoTheEntry(t *testing.T) {
 	}
 
 	if _, err := run(t, "ssh-config", "--write", "--ssh-config-file", file, "--kubeconfig", kubeconfig,
-		"--command", "/opt/kw", "--ca-file", "ca.pem"); err != nil {
+		"--command", kwCommand, "--ca-file", "ca.pem"); err != nil {
 		t.Fatal(err)
 	}
 	written, err := os.ReadFile(file)

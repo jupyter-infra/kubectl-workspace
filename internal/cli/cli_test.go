@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,16 @@ func runWithStderr(t *testing.T, args ...string) (stdout, stderr string, err err
 	err = root.ExecuteContext(context.Background())
 	return out.String(), errOut.String(), err
 }
+
+// kwCommand is an absolute --command path that ssh-config keeps as it is; on
+// Windows it carries the current drive, which is what filepath.Abs adds there.
+var kwCommand = func() string {
+	abs, err := filepath.Abs(filepath.FromSlash("/opt/kw"))
+	if err != nil {
+		panic(err)
+	}
+	return abs
+}()
 
 func staticKubeconfig(t *testing.T) string {
 	t.Helper()
