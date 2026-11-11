@@ -27,11 +27,8 @@ func DefaultPath() (string, error) {
 }
 
 // Install writes the entry into the SSH configuration file at path, creating the
-// file when needed. An existing entry for the same cluster is replaced in place.
-// A new entry goes before the first Host or Match block, so its options win over
-// a later `Host *` block, and after whatever precedes that block: a Host block
-// runs to the next Host or Match keyword, so an entry inserted above a top-level
-// Include would capture the included options for its own hosts.
+// file when needed. An existing entry for the same cluster is replaced in place; a
+// new one goes where firstBlock says.
 func Install(path string, e Entry) error {
 	if err := e.Validate(); err != nil {
 		return err
@@ -146,29 +143,26 @@ func merge(content string, e Entry) (string, error) {
 	}
 
 	var out []string
-	switch {
-	case start >= 0:
+	if start >= 0 {
 		out = append(out, lines[:start]...)
 		out = append(out, entry...)
 		out = append(out, lines[end+1:]...)
-	default:
-		at := firstBlock(lines)
-		if at < 0 {
-			out = append(out, lines...)
-			if len(out) > 0 && out[len(out)-1] != "" {
-				out = append(out, "")
-			}
-			out = append(out, entry...)
-			break
-		}
-		out = append(out, lines[:at]...)
-		if at > 0 && lines[at-1] != "" {
-			out = append(out, "")
-		}
-		out = append(out, entry...)
-		out = append(out, "")
-		out = append(out, lines[at:]...)
+		return strings.Join(out, newline) + newline, nil
 	}
+	at := firstBlock(lines)
+	if at < 0 {
+		at = len(lines)
+	}
+	before, after := lines[:at], lines[at:]
+	out = append(out, before...)
+	if len(before) > 0 && before[len(before)-1] != "" {
+		out = append(out, "")
+	}
+	out = append(out, entry...)
+	if len(after) > 0 {
+		out = append(out, "")
+	}
+	out = append(out, after...)
 	return strings.Join(out, newline) + newline, nil
 }
 
@@ -210,10 +204,13 @@ func findEntry(lines []string, cluster string) (start, end int, err error) {
 // accepts `Keyword value` and `Keyword=value`, in any letter case.
 var blockKeyword = regexp.MustCompile(`(?i)^\s*(host|match)(\s|=)`)
 
-// firstBlock returns the index of the first Host or Match line, or -1, taking the
-// comment lines directly above the block with it. Another cluster's entry counts
-// from its start marker, so a new entry lands before the marker and not between it
-// and the Host line it encloses.
+// firstBlock returns where a new entry goes: the index of the first Host or Match
+// line, taking the comment lines directly above it along, or -1 when there is none.
+// Before the first block, the entry's options win over a later `Host *`; after
+// everything above it, because a Host block runs to the next Host or Match keyword,
+// so an entry placed above a top-level Include would capture the included options
+// for its own hosts. Another cluster's entry counts from its start marker, so a new
+// entry lands before the marker and not between it and the Host line it encloses.
 func firstBlock(lines []string) int {
 	for i, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), startMarkerPrefix) {
