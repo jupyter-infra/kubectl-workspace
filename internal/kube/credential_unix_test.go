@@ -14,3 +14,6 @@ import "syscall"
 func processGone(pid int) bool {
 	return syscall.Kill(pid, 0) != nil
 }
+
+// endProcess ends a process the tests started and no longer need.
+func endProcess(pid int) { _ = syscall.Kill(pid, syscall.SIGKILL) }

@@ -6,6 +6,7 @@ Distributed under the terms of the MIT license
 package kube
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -33,6 +34,12 @@ const fakePluginEnv = "KUBE_TEST_FAKE_PLUGIN"
 
 const testAPIVersion = "client.authentication.k8s.io/v1"
 
+// The fake plugin reports pids on stderr under these prefixes.
+const (
+	pluginPIDPrefix = "plugin-pid:"
+	childPIDPrefix  = "child-pid:"
+)
+
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakePluginEnv); mode != "" {
 		os.Exit(fakePlugin(mode))
@@ -47,28 +54,36 @@ func fakePlugin(mode string) int {
 		fmt.Printf(`{"apiVersion":%q,"kind":"ExecCredential","status":%s}`, testAPIVersion, status)
 		return 0
 	}
+	reportPID := func() { fmt.Fprintf(os.Stderr, "%s%d\n", pluginPIDPrefix, os.Getpid()) }
 	switch mode {
 	case "sleep":
+		reportPID()
 		time.Sleep(time.Minute)
 		return 0
 	case "sleep-with-child", "child-then-exit":
+		reportPID()
 		child := exec.Command(os.Args[0])
 		child.Env = append(os.Environ(), fakePluginEnv+"=sleep")
 		if err := child.Start(); err != nil {
 			return 2
 		}
-		fmt.Fprintf(os.Stderr, "child-pid:%d\n", child.Process.Pid)
+		fmt.Fprintf(os.Stderr, "%s%d\n", childPIDPrefix, child.Process.Pid)
 		if mode == "sleep-with-child" {
 			time.Sleep(time.Minute)
 		}
 		return 0
 	case "fail":
 		return 3
-	case "resolve-sleeping-child":
-		// Stands in for connect itself: runs a plugin that spawns a child and never
-		// answers, so a test can kill this process and look for the grandchild.
-		target := fakeTarget("sleep-with-child", false)
-		if err := ResolveCredential(context.Background(), target, CredentialOptions{Stderr: os.Stderr, Timeout: time.Minute}); err != nil {
+	case "resolve-sleeping-child", "resolve-interactive-sleeping-child":
+		// Stands in for connect, or for open in the interactive mode: runs a plugin
+		// that starts a child and never answers, so a test can end this process and
+		// look at what remains.
+		opts := CredentialOptions{Stderr: os.Stderr, Timeout: time.Minute}
+		if mode == "resolve-interactive-sleeping-child" {
+			isTerminal = func(io.Reader) bool { return true }
+			opts = CredentialOptions{Interactive: true, Stdin: strings.NewReader(""), Stderr: os.Stderr}
+		}
+		if err := ResolveCredential(context.Background(), fakeTarget("sleep-with-child", false), opts); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
@@ -408,19 +423,37 @@ func TestResolveCredentialTerminatesThePluginsChildrenAtTheDeadline(t *testing.T
 		t.Fatalf("error = %v, want *SignInRequiredError", err)
 	}
 
-	childPID := childPIDFrom(t, stderr.String())
+	childPID := reportedPID(t, stderr.String(), childPIDPrefix)
 	// On Unix a zombie still answers until init reaps it once the plugin is gone.
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if processGone(childPID) {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
+	if !goneWithin(childPID, 3*time.Second) {
+		endProcess(childPID)
+		t.Errorf("the plugin's child %d survived the deadline", childPID)
 	}
-	if child, err := os.FindProcess(childPID); err == nil {
-		_ = child.Kill()
+}
+
+// Canceling an interactive sign-in, Ctrl+C in open, ends the plugin although it
+// runs without a deadline and outside its own process group.
+func TestResolveCredentialCancelEndsAnInteractivePlugin(t *testing.T) {
+	pretendTerminal(t, true)
+	stderrR, stderrW := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		opts := CredentialOptions{Interactive: true, Stdin: strings.NewReader(""), Stderr: stderrW}
+		done <- ResolveCredential(ctx, fakeTarget("sleep", false), opts)
+		_ = stderrW.Close()
+	}()
+	pid := scanPIDs(t, stderrR, pluginPIDPrefix)[pluginPIDPrefix]
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context.Canceled", err)
 	}
-	t.Errorf("the plugin's child %d survived the deadline", childPID)
+	if !goneWithin(pid, 3*time.Second) {
+		endProcess(pid)
+		t.Errorf("the interactive plugin %d survived the cancel", pid)
+	}
 }
 
 func TestProcessTreeReportsAFinishedPluginAsDone(t *testing.T) {
@@ -440,24 +473,58 @@ func TestProcessTreeReportsAFinishedPluginAsDone(t *testing.T) {
 	}
 }
 
-// childPIDFrom reads the pid the fake plugin reports for the child it started.
-func childPIDFrom(t *testing.T, stderr string) int {
+// reportedPID reads a pid the fake plugin reported on stderr under prefix.
+func reportedPID(t *testing.T, stderr, prefix string) int {
 	t.Helper()
 	for _, line := range strings.Split(stderr, "\n") {
-		if raw, ok := strings.CutPrefix(line, "child-pid:"); ok {
+		if raw, ok := strings.CutPrefix(line, prefix); ok {
 			pid, err := strconv.Atoi(raw)
 			if err == nil && pid != 0 {
 				return pid
 			}
 		}
 	}
-	t.Fatalf("the plugin did not report its child; stderr:\n%s", stderr)
+	t.Fatalf("the plugin did not report %q; stderr:\n%s", prefix, stderr)
 	return 0
 }
 
-// An interactive plugin keeps the terminal's process group on Unix and gets no job
-// on Windows, so a program it leaves behind, such as the browser kubelogin opens
-// for the sign-in, outlives it.
+// scanPIDs reads a live stderr until every prefix has reported a pid, then keeps
+// draining it so the writer never blocks.
+func scanPIDs(t *testing.T, stderr io.Reader, prefixes ...string) map[string]int {
+	t.Helper()
+	pids := make(map[string]int, len(prefixes))
+	scanner := bufio.NewScanner(stderr)
+	for len(pids) < len(prefixes) && scanner.Scan() {
+		for _, prefix := range prefixes {
+			if raw, ok := strings.CutPrefix(scanner.Text(), prefix); ok {
+				pids[prefix], _ = strconv.Atoi(raw)
+			}
+		}
+	}
+	if len(pids) < len(prefixes) {
+		t.Fatalf("stderr ended before every pid was reported: %v", pids)
+	}
+	go func() { _, _ = io.Copy(io.Discard, stderr) }()
+	return pids
+}
+
+// goneWithin polls until no process with pid answers or the wait runs out.
+func goneWithin(pid int, wait time.Duration) bool {
+	deadline := time.Now().Add(wait)
+	for {
+		if processGone(pid) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// An interactive plugin keeps the terminal's process group on Unix, and on Windows
+// its children stay out of its job, so a program it leaves behind, such as the
+// browser kubelogin opens for the sign-in, outlives it.
 func TestProcessTreeLeavesAnInteractivePluginsChildAlive(t *testing.T) {
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = append(os.Environ(), fakePluginEnv+"=child-then-exit")
@@ -473,10 +540,8 @@ func TestProcessTreeLeavesAnInteractivePluginsChildAlive(t *testing.T) {
 	}
 	tree.close()
 
-	childPID := childPIDFrom(t, stderr.String())
-	if child, err := os.FindProcess(childPID); err == nil {
-		defer func() { _ = child.Kill() }()
-	}
+	childPID := reportedPID(t, stderr.String(), childPIDPrefix)
+	defer endProcess(childPID)
 	if processGone(childPID) {
 		t.Errorf("the interactive plugin's child %d ended with the plugin", childPID)
 	}

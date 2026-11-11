@@ -18,10 +18,12 @@ import (
 const stillActive = 259
 
 // processTree ends the credential plugin together with the processes it started.
-// Windows has no process groups to signal; a job object holds the plugin and
-// everything it starts and ends them all when terminated or when its handle
-// closes, which also covers this process being killed by OpenSSH. On a Windows
-// that refuses to nest jobs the plugin is killed alone, as before.
+// Windows has no process groups to signal; a job object holds the plugin and ends
+// it when terminated or when its handle closes, which also covers this process
+// being killed by OpenSSH. The processes a non-interactive plugin starts are in the
+// job too; those of an interactive plugin stay out, so the browser kubelogin opens
+// for the sign-in outlives it. On a Windows that refuses to nest jobs the plugin is
+// killed alone, as before.
 type processTree struct {
 	cmd *exec.Cmd
 	// mu guards the handles: attach sets them after the plugin starts, while
@@ -31,20 +33,19 @@ type processTree struct {
 	proc windows.Handle
 }
 
-// newProcessTree creates the job for a plugin that runs without a terminal; cmd
-// must not have started yet. An interactive plugin gets no job: the browser
-// kubelogin opens for the sign-in would otherwise end with it.
+// newProcessTree creates the job; cmd must not have started yet. own puts the
+// processes the plugin starts into the job as well.
 func newProcessTree(cmd *exec.Cmd, own bool) *processTree {
 	t := &processTree{cmd: cmd}
-	if !own {
-		return t
-	}
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return t
 	}
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	info.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	if !own {
+		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK
+	}
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
 		_ = windows.CloseHandle(job)
@@ -76,8 +77,8 @@ func (t *processTree) attach() {
 	t.proc = proc
 }
 
-// terminate ends the job, and with it the plugin and its children; a plugin the
-// job has not received yet, or that has no job, is killed on its own. A plugin
+// terminate ends the job and the processes in it; a plugin the job has not
+// received yet, or that has no job, is killed on its own. A plugin
 // that had already exited is reported as done, which exec treats as benign.
 func (t *processTree) terminate() error {
 	t.mu.Lock()

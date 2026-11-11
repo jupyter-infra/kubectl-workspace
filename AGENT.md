@@ -54,12 +54,15 @@ the operator's dependency graph out of this binary.
 - The credential plugin never sees the tunnel. client-go would run the kubeconfig's
   exec plugin on the first request, with no deadline and with the process's stdin,
   which under `ssh` is the SSH stream. `kube.ResolveCredential` runs it itself: no
-  stdin, `interactive: false` in `KUBERNETES_EXEC_INFO`, and a process tree that
-  ends as one: its own process group with SIGTERM at the deadline on Unix, a job
-  object on Windows. A plugin that produces nothing before the deadline is a
-  `SignInRequiredError`, one that exits non-zero a `PluginExitError`; both get the
-  `kubectl workspace open` hint, a missing plugin gets the kubeconfig's install hint
-  instead.
+  stdin, `interactive: false` in `KUBERNETES_EXEC_INFO`, and the plugin ends with the
+  command that ran it: SIGTERM at the deadline or on a signal on Unix, a job object
+  on Windows, which also ends it when `connect` itself is ended. What the plugin
+  started ends with it only when it ran without a terminal, through its process
+  group on Unix and the job on Windows, so the browser kubelogin opens for an
+  interactive sign-in under `open` stays. A plugin that produces nothing before the
+  deadline is a `SignInRequiredError`, one that exits non-zero a `PluginExitError`;
+  both get the `kubectl workspace open` hint, a missing plugin gets the kubeconfig's
+  install hint instead.
 - A signal ends the session quietly. OpenSSH ends a ProxyCommand with SIGHUP.
   `connect` exits 0 with nothing printed whichever phase the signal interrupts; the
   dial watches the context itself, because the WebSocket library stops watching it
