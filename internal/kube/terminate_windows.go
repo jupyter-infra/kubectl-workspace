@@ -8,6 +8,7 @@ package kube
 import (
 	"os"
 	"os/exec"
+	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -22,7 +23,10 @@ const stillActive = 259
 // closes, which also covers this process being killed by OpenSSH. On a Windows
 // that refuses to nest jobs the plugin is killed alone, as before.
 type processTree struct {
-	cmd  *exec.Cmd
+	cmd *exec.Cmd
+	// mu guards the handles: attach sets them after the plugin starts, while
+	// terminate runs on the goroutine exec watches the context from.
+	mu   sync.Mutex
 	job  windows.Handle
 	proc windows.Handle
 }
@@ -48,6 +52,8 @@ func newProcessTree(cmd *exec.Cmd, _ bool) *processTree {
 // attach puts the running plugin into the job. A child the plugin starts before
 // this call is not covered; kubectl needs far longer to start its plugin.
 func (t *processTree) attach() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.job == 0 {
 		return
 	}
@@ -68,6 +74,8 @@ func (t *processTree) attach() {
 // terminate ends the job, and with it the plugin and its children. A plugin that
 // had already exited is reported as done, which exec treats as benign.
 func (t *processTree) terminate() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	exited := t.exited()
 	var err error
 	if t.job != 0 {
@@ -81,6 +89,7 @@ func (t *processTree) terminate() error {
 	return err
 }
 
+// exited reports whether the plugin has ended; the caller holds mu.
 func (t *processTree) exited() bool {
 	if t.proc == 0 {
 		return false
@@ -91,12 +100,16 @@ func (t *processTree) exited() bool {
 
 // close releases the handles; kill-on-close ends anything still in the job.
 func (t *processTree) close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.proc != 0 {
 		_ = windows.CloseHandle(t.proc)
+		t.proc = 0
 	}
 	t.dropJob()
 }
 
+// dropJob closes the job, leaving the plugin to be killed alone; the caller holds mu.
 func (t *processTree) dropJob() {
 	if t.job != 0 {
 		_ = windows.CloseHandle(t.job)
