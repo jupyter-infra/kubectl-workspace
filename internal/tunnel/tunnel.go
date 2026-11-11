@@ -19,7 +19,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -28,8 +27,10 @@ import (
 const (
 	handshakeTimeout = 15 * time.Second
 
-	// writeWait bounds one WebSocket write, and so how long the write lock is held.
+	// writeWait bounds one WebSocket write.
 	writeWait = 10 * time.Second
+	// maxErrorDetail bounds how much of a refusing server's body reaches the user.
+	maxErrorDetail = 512
 
 	// closeWait is how long to wait for the server's close frame after sending ours.
 	closeWait = 2 * time.Second
@@ -70,8 +71,12 @@ type DialOptions struct {
 	RootCAs *x509.CertPool
 }
 
-// LoadRoots reads a PEM bundle into a certificate pool.
+// LoadRoots reads a PEM bundle into a certificate pool; an empty path returns nil,
+// which keeps the system roots.
 func LoadRoots(path string) (*x509.CertPool, error) {
+	if path == "" {
+		return nil, nil
+	}
 	pem, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the CA file: %w", err)
@@ -133,8 +138,8 @@ func dialError(u *url.URL, resp *http.Response, err error) error {
 		return fmt.Errorf("failed to connect to %s: %w", u.Redacted(), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-	detail := strings.TrimSpace(string(body))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorDetail))
+	detail := strings.Join(strings.Fields(string(body)), " ")
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("%s rejected the connection token (HTTP %d): %s", u.Host, resp.StatusCode, detail)
@@ -150,12 +155,11 @@ func dialError(u *url.URL, resp *http.Response, err error) error {
 // close by the server returns nil, or a *websocket.CloseError when the server gave
 // a reason; see CloseReason.
 func Relay(ctx context.Context, ws *websocket.Conn, in io.Reader, out io.Writer) error {
-	r := &relay{ws: ws}
 	ws.SetReadLimit(readLimit)
-	_ = ws.SetReadDeadline(time.Now().Add(readTimeout))
+	extendReadDeadline(ws)
 	ws.SetPingHandler(func(data string) error {
-		_ = ws.SetReadDeadline(time.Now().Add(readTimeout))
-		err := r.writeControl(websocket.PongMessage, []byte(data))
+		extendReadDeadline(ws)
+		err := writeControl(ws, websocket.PongMessage, []byte(data))
 		if err == nil || errors.Is(err, websocket.ErrCloseSent) {
 			return nil
 		}
@@ -163,9 +167,9 @@ func Relay(ctx context.Context, ws *websocket.Conn, in io.Reader, out io.Writer)
 	})
 
 	downErr := make(chan error, 1)
-	go func() { downErr <- r.downstream(out) }()
+	go func() { downErr <- downstream(ws, out) }()
 	upErr := make(chan error, 1)
-	go func() { upErr <- r.upstream(in) }()
+	go func() { upErr <- upstream(ws, in) }()
 
 	select {
 	case err := <-downErr:
@@ -184,7 +188,7 @@ func Relay(ctx context.Context, ws *websocket.Conn, in io.Reader, out io.Writer)
 		}
 	case <-ctx.Done():
 		msg := websocket.FormatCloseMessage(websocket.CloseGoingAway, "")
-		_ = r.writeControl(websocket.CloseMessage, msg)
+		_ = writeControl(ws, websocket.CloseMessage, msg)
 		return ctx.Err()
 	}
 }
@@ -199,19 +203,15 @@ func CloseReason(err error) (string, bool) {
 	return "", false
 }
 
-type relay struct {
-	ws      *websocket.Conn
-	writeMu sync.Mutex
-}
-
 // upstream copies in to the WebSocket. EOF on in is the SSH client exiting, which
 // is reported to the server with a close frame.
-func (r *relay) upstream(in io.Reader) error {
+func upstream(ws *websocket.Conn, in io.Reader) error {
 	buf := make([]byte, chunkSize)
 	for {
 		n, err := in.Read(buf)
 		if n > 0 {
-			if werr := r.writeMessage(buf[:n]); werr != nil {
+			_ = ws.SetWriteDeadline(time.Now().Add(writeWait))
+			if werr := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
 				return fmt.Errorf("%w: %w", errWriteFailed, werr)
 			}
 		}
@@ -220,7 +220,7 @@ func (r *relay) upstream(in io.Reader) error {
 		}
 		if errors.Is(err, io.EOF) {
 			msg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
-			_ = r.writeControl(websocket.CloseMessage, msg)
+			_ = writeControl(ws, websocket.CloseMessage, msg)
 			return nil
 		}
 		return fmt.Errorf("failed to read from stdin: %w", err)
@@ -228,13 +228,13 @@ func (r *relay) upstream(in io.Reader) error {
 }
 
 // downstream copies binary frames to out until the WebSocket ends.
-func (r *relay) downstream(out io.Writer) error {
+func downstream(ws *websocket.Conn, out io.Writer) error {
 	for {
-		messageType, data, err := r.ws.ReadMessage()
+		messageType, data, err := ws.ReadMessage()
 		if err != nil {
 			return err
 		}
-		_ = r.ws.SetReadDeadline(time.Now().Add(readTimeout))
+		extendReadDeadline(ws)
 		if messageType != websocket.BinaryMessage {
 			continue
 		}
@@ -244,19 +244,15 @@ func (r *relay) downstream(out io.Writer) error {
 	}
 }
 
-func (r *relay) writeMessage(data []byte) error {
-	r.writeMu.Lock()
-	defer r.writeMu.Unlock()
-	if err := r.ws.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-		return err
-	}
-	return r.ws.WriteMessage(websocket.BinaryMessage, data)
+// extendReadDeadline gives the server another readTimeout to show life.
+func extendReadDeadline(ws *websocket.Conn) {
+	_ = ws.SetReadDeadline(time.Now().Add(readTimeout))
 }
 
-func (r *relay) writeControl(messageType int, data []byte) error {
-	r.writeMu.Lock()
-	defer r.writeMu.Unlock()
-	return r.ws.WriteControl(messageType, data, time.Now().Add(writeWait))
+// writeControl sends a control frame; the library allows it alongside the data
+// writer, so no lock of our own is needed.
+func writeControl(ws *websocket.Conn, messageType int, data []byte) error {
+	return ws.WriteControl(messageType, data, time.Now().Add(writeWait))
 }
 
 // closeResult maps the error that ended the read loop. A normal close frame means
