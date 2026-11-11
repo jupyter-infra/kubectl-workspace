@@ -31,6 +31,8 @@ test-e2e: ## Run ssh and sftp through the plugin against the published sidecar a
 
 KIND ?= kind
 E2E_KIND_CLUSTER ?= kubectl-workspace-e2e
+# Operator chart version; the auth middleware image follows it. CI runs the suite on
+# the oldest release the README supports and on the latest.
 E2E_OPERATOR_CHART_VERSION ?= 0.4.1
 E2E_CERT_MANAGER_CHART_VERSION ?= v1.21.3
 E2E_TRAEFIK_CHART_VERSION ?= 42.3.2
@@ -51,7 +53,7 @@ setup-e2e-kind: ## Create the Kind cluster with cert-manager, the operator, the 
 	$(E2E_HELM) upgrade --install jupyter-k8s oci://ghcr.io/jupyter-infra/charts/jupyter-k8s --version $(E2E_OPERATOR_CHART_VERSION) \
 		--namespace jupyter-k8s-system --create-namespace --set extensionApi.jwtSecret.enable=true --wait --timeout 240s
 	$(E2E_KUBECTL) wait --for=condition=Available --timeout=180s apiservice/v1alpha1.connection.workspace.jupyter.org
-	$(E2E_KUBECTL) apply -f test/e2e/testdata/kind/authmiddleware.yaml
+	sed 's/__OPERATOR_VERSION__/$(E2E_OPERATOR_CHART_VERSION)/' test/e2e/testdata/kind/authmiddleware.yaml | $(E2E_KUBECTL) apply -f -
 	$(E2E_HELM) upgrade --install traefik traefik --repo https://traefik.github.io/charts --version $(E2E_TRAEFIK_CHART_VERSION) \
 		--namespace traefik --create-namespace \
 		--set service.spec.type=ClusterIP --set providers.kubernetesCRD.allowCrossNamespace=true \

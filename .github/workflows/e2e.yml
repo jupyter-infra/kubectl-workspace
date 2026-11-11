@@ -23,9 +23,14 @@ jobs:
         run: make test-e2e
 
   kind:
-    name: ssh through the operator and traefik on kind
+    name: ssh through operator ${{ matrix.operator }} and traefik on kind
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest operator release the README supports, and the latest.
+        operator: ["0.3.0", "0.4.1"]
     steps:
       - name: Clone the code
         uses: actions/checkout@v4
@@ -42,12 +47,12 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
 
       - name: Run the Kind E2E tests
-        run: make test-e2e-kind-full
+        run: make test-e2e-kind-full E2E_OPERATOR_CHART_VERSION=${{ matrix.operator }}
 
       - name: Keep the cluster logs of a failed run
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: kind-logs
+          name: kind-logs-${{ matrix.operator }}
           path: bin/kind-logs
           if-no-files-found: ignore

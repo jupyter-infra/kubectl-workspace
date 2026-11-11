@@ -100,7 +100,7 @@ spec:
       serviceAccountName: jupyter-k8s-authmiddleware
       containers:
         - name: authmiddleware
-          image: ghcr.io/jupyter-infra/jupyter-k8s-authmiddleware:v0.4.1
+          image: ghcr.io/jupyter-infra/jupyter-k8s-authmiddleware:v__OPERATOR_VERSION__
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

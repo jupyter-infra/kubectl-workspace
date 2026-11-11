@@ -145,7 +145,9 @@ port through a `kubectl port-forward`, and checks a command through the ingress,
 `open --print-only`, and the refusals without the rig's CA, for a service account
 without access and for a stopped workspace. `make setup-e2e-kind` installs the
 cluster-level pieces at the versions pinned in the Makefile; the suite applies
-`test/e2e/testdata/kind/fixtures.yaml`.
+`test/e2e/testdata/kind/fixtures.yaml`. CI runs the suite on the oldest operator
+release the README supports and on the latest (`E2E_OPERATOR_CHART_VERSION`); the
+auth middleware image follows the operator version.
 
 When adding a test:
 
