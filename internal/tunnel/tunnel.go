@@ -42,6 +42,10 @@ const (
 	readLimit = 1024 * 1024
 )
 
+// errWriteFailed marks a frame the WebSocket refused; when the server closed first,
+// its close frame says why.
+var errWriteFailed = errors.New("failed to write to the workspace")
+
 // errPongFailed marks a ping that could not be answered, which would otherwise
 // surface as a read deadline and read as silence from the server.
 var errPongFailed = errors.New("failed to answer the sidecar's ping")
@@ -166,16 +170,16 @@ func Relay(ctx context.Context, ws *websocket.Conn, in io.Reader, out io.Writer)
 	case err := <-downErr:
 		return closeResult(err)
 	case err := <-upErr:
-		if err != nil {
+		if err != nil && !errors.Is(err, errWriteFailed) {
 			return err
 		}
-		// After the close frame the EOF path sent, the server's own close frame is
-		// the authoritative outcome.
+		// After the close frame the EOF path sent, or a write the server refused
+		// because it closed first, the server's own close frame is the outcome.
 		select {
 		case derr := <-downErr:
 			return closeResult(derr)
 		case <-time.After(closeWait):
-			return nil
+			return err
 		}
 	case <-ctx.Done():
 		msg := websocket.FormatCloseMessage(websocket.CloseGoingAway, "")
@@ -207,7 +211,7 @@ func (r *relay) upstream(in io.Reader) error {
 		n, err := in.Read(buf)
 		if n > 0 {
 			if werr := r.writeMessage(buf[:n]); werr != nil {
-				return werr
+				return fmt.Errorf("%w: %w", errWriteFailed, werr)
 			}
 		}
 		if err == nil {
