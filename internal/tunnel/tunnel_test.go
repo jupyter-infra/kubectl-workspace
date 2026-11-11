@@ -239,6 +239,27 @@ func TestRelayReturnsTheServersCloseReason(t *testing.T) {
 	}
 }
 
+// A write after the server's close frame fails with ErrCloseSent; the server's
+// reason still wins over the write error, whichever side reports first.
+func TestRelayKeepsTheServersReasonWhenStdinWritesAfterTheClose(t *testing.T) {
+	echo := testutil.NewEchoServer(t)
+	replied := make(chan struct{})
+	echo.SetOnConn(func(ws *websocket.Conn) {
+		msg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "session duration limit reached")
+		_ = ws.WriteControl(websocket.CloseMessage, msg, time.Now().Add(time.Second))
+		_, _, _ = ws.ReadMessage()
+		close(replied)
+	})
+	h := startRelay(t, echo)
+
+	<-replied
+	_, _ = io.WriteString(h.stdin, "late bytes")
+	err := h.wait(t)
+	if reason, ok := CloseReason(err); !ok || reason != "session duration limit reached" {
+		t.Errorf("CloseReason(%v) = %q, %v; want the server's reason", err, reason, ok)
+	}
+}
+
 func TestRelayEndsQuietlyOnANormalCloseWithoutReason(t *testing.T) {
 	echo := testutil.NewEchoServer(t)
 	echo.SetOnConn(testutil.CloseWithReason(""))

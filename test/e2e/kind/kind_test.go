@@ -163,8 +163,7 @@ func startRig() (*rig, error) {
 	if err != nil {
 		return r, fmt.Errorf("applying the fixtures: %v", err)
 	}
-	if out, err := r.kubectl("-n", namespace, "wait", "--for=condition=Available",
-		"--timeout="+readyTimeout.String(), "workspace/"+workspace); err != nil {
+	if out, err := r.waitAvailable(); err != nil {
 		pods, _ := r.kubectl("-n", namespace, "get", "pods", "-o", "wide")
 		status, _ := r.kubectl("-n", namespace, "get", "workspace", workspace, "-o", "yaml")
 		return r, fmt.Errorf("the workspace did not become Available: %v\n%s\npods:\n%s\nworkspace:\n%s", err, out, pods, status)
@@ -205,6 +204,12 @@ func (r *rig) kubectl(args ...string) (string, error) {
 
 func (r *rig) kubectlStdin(stdin string, args ...string) (string, error) {
 	return harness.CommandWithStdin(stdin, "kubectl", append([]string{"--kubeconfig", r.kubeconfig}, args...)...)
+}
+
+// waitAvailable blocks until the workspace reports Available, up to readyTimeout.
+func (r *rig) waitAvailable() (string, error) {
+	return r.kubectl("-n", namespace, "wait", "--for=condition=Available",
+		"--timeout="+readyTimeout.String(), "workspace/"+workspace)
 }
 
 // mustKubectl runs kubectl and fails the test on an error.
@@ -334,7 +339,12 @@ func TestConnectIsRefusedWhenTheWorkspaceIsStopped(t *testing.T) {
 			"-p", fmt.Sprintf(`{"spec":{"desiredStatus":%q}}`, status))
 	}
 	setDesiredStatus("Stopped")
-	t.Cleanup(func() { setDesiredStatus("Running") })
+	t.Cleanup(func() {
+		setDesiredStatus("Running")
+		if out, err := shared.waitAvailable(); err != nil {
+			t.Errorf("the workspace did not come back after the test: %v\n%s", err, out)
+		}
+	})
 	// The operator answers from an informer cache, so the refusal is polled for
 	// rather than inferred from the Workspace status.
 	if err := harness.Poll(2*time.Minute, 2*time.Second, func() (bool, string) {
