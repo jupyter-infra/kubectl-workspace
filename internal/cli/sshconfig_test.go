@@ -79,11 +79,9 @@ func TestSSHConfigWritesTheKubeconfigIntoTheEntry(t *testing.T) {
 	tests := []struct {
 		name       string
 		env        string
-		args       []string
 		wantInFile bool
 		wantStderr string
 	}{
-		{name: "flag", args: []string{"--kubeconfig", kubeconfig}, wantInFile: true},
 		{name: "single-file KUBECONFIG", env: kubeconfig, wantInFile: true},
 		{
 			name:       "KUBECONFIG list",
@@ -94,7 +92,7 @@ func TestSSHConfigWritesTheKubeconfigIntoTheEntry(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("KUBECONFIG", tt.env)
-			stdout, stderr, err := runWithStderr(t, append([]string{"ssh-config", "--command", "/opt/kw"}, tt.args...)...)
+			stdout, stderr, err := runWithStderr(t, "ssh-config", "--command", "/opt/kw")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,10 +113,14 @@ func TestInstalledEntryRunsConnect(t *testing.T) {
 	op := testutil.NewFakeOperator(t, http.StatusCreated,
 		testutil.ConnectionBody(echo.URL(sshPath).String()+"?token=abc.def"))
 	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
-	configFile := filepath.Join(t.TempDir(), "config")
-	if _, err := run(t, "ssh-config", "--write", "--kubeconfig", kubeconfig, "--context", testutil.ARNContext,
-		"--cluster-name", "dev", "--command", "/opt/kw", "--ssh-config-file", configFile); err != nil {
+	configFile := filepath.Join(t.TempDir(), ".ssh", "config")
+	stdout, err := run(t, "ssh-config", "--write", "--kubeconfig", kubeconfig, "--context", testutil.ARNContext,
+		"--cluster-name", "dev", "--command", "/opt/kw", "--ssh-config-file", configFile)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "Connect with: ssh <workspace>.<namespace>.dev.jk8s") {
+		t.Errorf("stdout = %q, want the alias form to connect with", stdout)
 	}
 
 	content, err := os.ReadFile(configFile)
@@ -146,22 +148,6 @@ func TestInstalledEntryRunsConnect(t *testing.T) {
 	}
 	if upgrade := echo.LastHandshake(t); upgrade.Authorization != "Bearer abc.def" {
 		t.Errorf("WebSocket Authorization = %q", upgrade.Authorization)
-	}
-}
-
-func TestSSHConfigWriteInstallsTheEntry(t *testing.T) {
-	configFile := filepath.Join(t.TempDir(), ".ssh", "config")
-
-	stdout, err := run(t, "ssh-config", "--kubeconfig", staticKubeconfig(t), "--command", "/opt/kw", "--write",
-		"--ssh-config-file", configFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if installed, err := sshconfig.Installed(configFile, "dev"); err != nil || !installed {
-		t.Errorf("entry installed = %v, %v", installed, err)
-	}
-	if !strings.Contains(stdout, "ssh <workspace>.<namespace>.dev.jk8s") {
-		t.Errorf("stdout = %q, want the alias form to connect with", stdout)
 	}
 }
 

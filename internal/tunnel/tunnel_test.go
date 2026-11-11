@@ -192,7 +192,7 @@ func TestRelayCarriesBytesBothWaysAndEndsOnStdinEOF(t *testing.T) {
 		t.Error("echoed bytes differ from what was sent")
 	}
 
-	// EOF on stdin is ssh exiting; the relay must end without an error.
+	// EOF on stdin is ssh exiting.
 	_ = h.stdin.Close()
 	if err := h.wait(t); err != nil {
 		t.Errorf("Relay returned %v after stdin closed, want nil", err)
@@ -249,40 +249,42 @@ func TestRelayEndsQuietlyOnANormalCloseWithoutReason(t *testing.T) {
 	}
 }
 
-func TestRelayReportsAnAbruptDisconnect(t *testing.T) {
-	echo := testutil.NewEchoServer(t)
-	echo.SetOnConn(func(ws *websocket.Conn) { _ = ws.UnderlyingConn().Close() })
-	h := startRelay(t, echo)
-
-	err := h.wait(t)
-	if err == nil {
-		t.Fatal("Relay returned nil for a connection cut without a close frame")
+func TestRelayReportsACutConnection(t *testing.T) {
+	tests := []struct {
+		name string
+		cut  func(t *testing.T, ws *websocket.Conn)
+	}{
+		{name: "closed without a close frame", cut: func(_ *testing.T, ws *websocket.Conn) {
+			_ = ws.UnderlyingConn().Close()
+		}},
+		{name: "reset", cut: func(t *testing.T, ws *websocket.Conn) {
+			// A zero linger turns the close into a TCP reset instead of a FIN.
+			tcp, ok := ws.UnderlyingConn().(*net.TCPConn)
+			if !ok {
+				t.Errorf("the echo server's connection is a %T, want a TCP connection", ws.UnderlyingConn())
+				return
+			}
+			_ = tcp.SetLinger(0)
+			_ = tcp.Close()
+		}},
 	}
-	if _, ok := CloseReason(err); ok {
-		t.Errorf("an abrupt disconnect must not read as a normal close: %v", err)
-	}
-	if !strings.Contains(err.Error(), "the connection to the workspace was cut") || strings.Contains(err.Error(), "1006") {
-		t.Errorf("Relay returned %q, want the plain message without the close code", err)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			echo := testutil.NewEchoServer(t)
+			echo.SetOnConn(func(ws *websocket.Conn) { tt.cut(t, ws) })
+			h := startRelay(t, echo)
 
-func TestRelayReportsAResetConnection(t *testing.T) {
-	echo := testutil.NewEchoServer(t)
-	echo.SetOnConn(func(ws *websocket.Conn) {
-		// A zero linger turns the close into a TCP reset instead of a FIN.
-		tcp, ok := ws.UnderlyingConn().(*net.TCPConn)
-		if !ok {
-			t.Errorf("the echo server's connection is a %T, want a TCP connection", ws.UnderlyingConn())
-			return
-		}
-		_ = tcp.SetLinger(0)
-		_ = tcp.Close()
-	})
-	h := startRelay(t, echo)
-
-	err := h.wait(t)
-	if err == nil || !strings.Contains(err.Error(), "the connection to the workspace was cut") {
-		t.Errorf("Relay returned %v, want the plain message for a reset", err)
+			err := h.wait(t)
+			if err == nil {
+				t.Fatal("Relay returned nil for a connection cut without a close frame")
+			}
+			if _, ok := CloseReason(err); ok {
+				t.Errorf("a cut connection must not read as a normal close: %v", err)
+			}
+			if !strings.Contains(err.Error(), "the connection to the workspace was cut") || strings.Contains(err.Error(), "1006") {
+				t.Errorf("Relay returned %q, want the plain message without the close code", err)
+			}
+		})
 	}
 }
 
@@ -338,12 +340,8 @@ func TestRelayRejectsAFrameLargerThanTheReadLimit(t *testing.T) {
 	})
 	h := startRelay(t, echo)
 
-	err := h.wait(t)
-	if err == nil {
-		t.Fatal("Relay accepted a frame above the read limit")
-	}
-	if _, ok := CloseReason(err); ok {
-		t.Errorf("an oversized frame must not read as a normal close: %v", err)
+	if err := h.wait(t); !errors.Is(err, websocket.ErrReadLimit) {
+		t.Errorf("Relay returned %v, want the read limit error", err)
 	}
 }
 
@@ -414,7 +412,8 @@ func TestLoadRoots(t *testing.T) {
 	if _, err := LoadRoots(junk); err == nil || !strings.Contains(err.Error(), "no certificates") {
 		t.Errorf("LoadRoots(junk) = %v, want the empty bundle named", err)
 	}
-	if _, err := LoadRoots(filepath.Join(dir, "missing.pem")); err == nil {
-		t.Error("LoadRoots(missing) = nil, want an error")
+	_, err := LoadRoots(filepath.Join(dir, "missing.pem"))
+	if err == nil || !strings.Contains(err.Error(), "failed to read the CA file") {
+		t.Errorf("LoadRoots(missing) = %v, want the unreadable file reported", err)
 	}
 }

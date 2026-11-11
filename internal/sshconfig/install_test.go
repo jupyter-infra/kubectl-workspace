@@ -143,21 +143,10 @@ func TestInstallKeepsEachClusterInsideItsOwnMarkers(t *testing.T) {
 		}
 	}
 
-	lines := splitLines(readFile(t, path))
-	for _, e := range []Entry{staging, prod} {
-		start, end, err := findEntry(lines, e.Cluster)
-		if err != nil || start < 0 {
-			t.Fatalf("entry for %s: start %d, %v", e.Cluster, start, err)
-		}
-		var hosts []string
-		for _, line := range lines[start : end+1] {
-			if blockKeyword.MatchString(line) {
-				hosts = append(hosts, strings.TrimSpace(line))
-			}
-		}
-		if len(hosts) != 1 || hosts[0] != "Host "+e.HostPattern() {
-			t.Errorf("the markers for %s enclose %q, want only its own Host line", e.Cluster, hosts)
-		}
+	// A new cluster lands before the existing entry; the reinstall replaces staging in place.
+	want := prod.Render() + "\n" + staging.Render()
+	if got := readFile(t, path); got != want {
+		t.Errorf("file =\n%s\nwant\n%s", got, want)
 	}
 }
 
@@ -218,19 +207,6 @@ func TestInstallReplacesTheEntryForTheSameCluster(t *testing.T) {
 	}
 	if strings.Count(got, startMarker("prod")) != 1 {
 		t.Errorf("expected exactly one entry for prod, got %d", strings.Count(got, startMarker("prod")))
-	}
-}
-
-func TestInstallIsIdempotent(t *testing.T) {
-	path := writeFile(t, "Host github.com\n  User git\n")
-	for i := 0; i < 3; i++ {
-		if err := Install(path, testEntry()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	want := testEntry().Render() + "\nHost github.com\n  User git\n"
-	if got := readFile(t, path); got != want {
-		t.Errorf("after three installs file =\n%s\nwant\n%s", got, want)
 	}
 }
 

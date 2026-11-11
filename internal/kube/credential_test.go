@@ -243,35 +243,28 @@ func pretendTerminal(t *testing.T, terminal bool) {
 	t.Cleanup(func() { isTerminal = previous })
 }
 
-func TestResolveCredentialInteractiveHandsOverATerminalStdin(t *testing.T) {
-	pretendTerminal(t, true)
-	target := fakeTarget("stdin", false)
-	var stderr bytes.Buffer
-	opts := CredentialOptions{Interactive: true, Stdin: strings.NewReader("hello"), Stderr: &stderr}
-
-	if err := ResolveCredential(context.Background(), target, opts); err != nil {
-		t.Fatal(err)
-	}
-	if target.Config.BearerToken != "stdin:5" {
-		t.Errorf("token = %q, want stdin:5", target.Config.BearerToken)
-	}
-	if !execInfoSeen(t, stderr.String()).Spec.Interactive {
-		t.Error("exec info did not declare interactive")
-	}
-}
-
+// The fake plugin's token counts the bytes it read from stdin: 5 for the "hello"
+// handed over, 0 when it got no stdin.
 func TestResolveCredentialFollowsTheKubeconfigsInteractiveMode(t *testing.T) {
 	tests := []struct {
-		name     string
-		mode     clientcmdapi.ExecInteractiveMode
-		terminal bool
-		wantTok  string
-		wantErr  string
+		name            string
+		mode            clientcmdapi.ExecInteractiveMode
+		terminal        bool
+		wantTok         string
+		wantInteractive bool
+		wantErr         string
 	}{
+		{
+			name: "IfAvailable with a terminal", mode: clientcmdapi.IfAvailableExecInteractiveMode, terminal: true,
+			wantTok: "stdin:5", wantInteractive: true,
+		},
 		{name: "IfAvailable without a terminal", mode: clientcmdapi.IfAvailableExecInteractiveMode, wantTok: "stdin:0"},
 		{name: "unset without a terminal", mode: "", wantTok: "stdin:0"},
 		{name: "Never with a terminal", mode: clientcmdapi.NeverExecInteractiveMode, terminal: true, wantTok: "stdin:0"},
-		{name: "Always with a terminal", mode: clientcmdapi.AlwaysExecInteractiveMode, terminal: true, wantTok: "stdin:5"},
+		{
+			name: "Always with a terminal", mode: clientcmdapi.AlwaysExecInteractiveMode, terminal: true,
+			wantTok: "stdin:5", wantInteractive: true,
+		},
 		{name: "Always without a terminal", mode: clientcmdapi.AlwaysExecInteractiveMode, wantErr: "requires a terminal"},
 	}
 	for _, tt := range tests {
@@ -279,7 +272,8 @@ func TestResolveCredentialFollowsTheKubeconfigsInteractiveMode(t *testing.T) {
 			pretendTerminal(t, tt.terminal)
 			target := fakeTarget("stdin", false)
 			target.Config.ExecProvider.InteractiveMode = tt.mode
-			opts := CredentialOptions{Interactive: true, Stdin: strings.NewReader("hello")}
+			var stderr bytes.Buffer
+			opts := CredentialOptions{Interactive: true, Stdin: strings.NewReader("hello"), Stderr: &stderr}
 
 			err := ResolveCredential(context.Background(), target, opts)
 			if tt.wantErr != "" {
@@ -293,6 +287,9 @@ func TestResolveCredentialFollowsTheKubeconfigsInteractiveMode(t *testing.T) {
 			}
 			if target.Config.BearerToken != tt.wantTok {
 				t.Errorf("token = %q, want %q", target.Config.BearerToken, tt.wantTok)
+			}
+			if got := execInfoSeen(t, stderr.String()).Spec.Interactive; got != tt.wantInteractive {
+				t.Errorf("exec info interactive = %v, want %v", got, tt.wantInteractive)
 			}
 		})
 	}

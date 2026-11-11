@@ -15,23 +15,23 @@ func TestParseAlias(t *testing.T) {
 		name    string
 		host    string
 		want    Alias
-		wantErr bool
+		wantErr string
 	}{
 		{name: "plain", host: "ws1.team-a.prod.jk8s", want: Alias{"ws1", "team-a", "prod"}},
 		{name: "dotted workspace name", host: "my.ws.team-a.prod.jk8s", want: Alias{"my.ws", "team-a", "prod"}},
 		{name: "mixed case and trailing dot", host: "WS1.Team-A.Prod.jk8s.", want: Alias{"ws1", "team-a", "prod"}},
-		{name: "too few labels", host: "ws1.prod.jk8s", wantErr: true},
-		{name: "wrong suffix", host: "ws1.team-a.prod.example", wantErr: true},
-		{name: "underscore in namespace", host: "ws1.team_a.prod.jk8s", wantErr: true},
-		{name: "empty workspace", host: ".team-a.prod.jk8s", wantErr: true},
-		{name: "empty", host: "", wantErr: true},
+		{name: "too few labels", host: "ws1.prod.jk8s", wantErr: "is not a workspace alias"},
+		{name: "wrong suffix", host: "ws1.team-a.prod.example", wantErr: "is not a workspace alias"},
+		{name: "underscore in namespace", host: "ws1.team_a.prod.jk8s", wantErr: "invalid namespace"},
+		{name: "empty workspace", host: ".team-a.prod.jk8s", wantErr: "invalid workspace name"},
+		{name: "empty", host: "", wantErr: "is not a workspace alias"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ParseAlias(tt.host)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("ParseAlias(%q) = %v, want error", tt.host, got)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("ParseAlias(%q) = %v, %v; want an error mentioning %q", tt.host, got, err, tt.wantErr)
 				}
 				return
 			}

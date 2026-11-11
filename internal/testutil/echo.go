@@ -7,7 +7,6 @@ package testutil
 
 import (
 	"crypto/x509"
-	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -41,18 +40,20 @@ type EchoServer struct {
 // NewEchoServer starts an echo server.
 func NewEchoServer(t *testing.T) *EchoServer {
 	t.Helper()
-	e := &EchoServer{}
-	e.server = httptest.NewServer(e)
-	t.Cleanup(e.server.Close)
-	return e
+	return newEchoServer(t, httptest.NewServer)
 }
 
 // NewTLSEchoServer starts an echo server behind TLS with a certificate of its own,
 // standing in for an ingress whose certificate the system roots do not know.
 func NewTLSEchoServer(t *testing.T) *EchoServer {
 	t.Helper()
+	return newEchoServer(t, httptest.NewTLSServer)
+}
+
+func newEchoServer(t *testing.T, start func(http.Handler) *httptest.Server) *EchoServer {
+	t.Helper()
 	e := &EchoServer{}
-	e.server = httptest.NewTLSServer(e)
+	e.server = start(e)
 	t.Cleanup(e.server.Close)
 	return e
 }
@@ -66,7 +67,7 @@ func (e *EchoServer) CertPool() *x509.CertPool {
 
 // CAPEM returns a TLS echo server's certificate as a PEM bundle.
 func (e *EchoServer) CAPEM() []byte {
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: e.server.Certificate().Raw})
+	return []byte(certPEM(e.server))
 }
 
 // SetOnConn replaces the echo loop for connections accepted from now on.
@@ -116,21 +117,15 @@ func (e *EchoServer) URL(path string) *url.URL {
 	return u
 }
 
-// Handshakes returns a copy of the recorded handshakes.
-func (e *EchoServer) Handshakes() []Handshake {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return append([]Handshake(nil), e.handshakes...)
-}
-
 // LastHandshake returns the most recent handshake and fails the test when there is none.
 func (e *EchoServer) LastHandshake(t *testing.T) Handshake {
 	t.Helper()
-	handshakes := e.Handshakes()
-	if len(handshakes) == 0 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.handshakes) == 0 {
 		t.Fatal("the echo server received no WebSocket handshake")
 	}
-	return handshakes[len(handshakes)-1]
+	return e.handshakes[len(e.handshakes)-1]
 }
 
 // CloseWithReason is an OnConn hook that closes the session the way the sidecar

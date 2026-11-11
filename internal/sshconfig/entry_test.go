@@ -37,7 +37,7 @@ func TestRender(t *testing.T) {
 	}
 }
 
-func TestRenderQuotesForTheShell(t *testing.T) {
+func TestRenderProxyCommandLine(t *testing.T) {
 	tests := []struct {
 		name    string
 		entry   Entry
@@ -69,6 +69,16 @@ func TestRenderQuotesForTheShell(t *testing.T) {
 			wantCmd: "ProxyCommand /opt/kw connect --stdio --context 100%%dev %h",
 		},
 		{
+			name:    "credential timeout written when set",
+			entry:   Entry{Cluster: "dev", Context: "dev", Command: "/opt/kw", CredentialTimeout: 15 * time.Second},
+			wantCmd: "ProxyCommand /opt/kw connect --stdio --context dev --credential-timeout 15s %h",
+		},
+		{
+			name:    "CA file written when set",
+			entry:   Entry{Cluster: "dev", Context: "dev", Command: "/opt/kw", CAFile: "/etc/kw/ingress-ca.pem"},
+			wantCmd: "ProxyCommand /opt/kw connect --stdio --context dev --ca-file /etc/kw/ingress-ca.pem %h",
+		},
+		{
 			name:    "windows path keeps its backslashes",
 			entry:   Entry{Cluster: "dev", Context: "dev", Command: `C:\Users\me\.krew\bin\kubectl-workspace.exe`, Windows: true},
 			wantCmd: `ProxyCommand C:\Users\me\.krew\bin\kubectl-workspace.exe connect --stdio --context dev %h`,
@@ -85,17 +95,6 @@ func TestRenderQuotesForTheShell(t *testing.T) {
 				t.Errorf("Render() =\n%s\nwant a line %q", got, tt.wantCmd)
 			}
 		})
-	}
-}
-
-func TestRenderWritesANonDefaultCredentialTimeout(t *testing.T) {
-	entry := testEntry()
-	if strings.Contains(entry.Render(), "--credential-timeout") {
-		t.Error("an entry without a timeout must leave connect's default in place")
-	}
-	entry.CredentialTimeout = 15 * time.Second
-	if got := entry.Render(); !strings.Contains(got, " --context prod --credential-timeout 15s %h") {
-		t.Errorf("entry =\n%s\nwant --credential-timeout 15s before %%h", got)
 	}
 }
 
@@ -142,13 +141,5 @@ func TestValidateRejectsLineBreaks(t *testing.T) {
 	}
 	if err := testEntry().Validate(); err != nil {
 		t.Errorf("Validate() on a plain entry = %v", err)
-	}
-}
-
-func TestRenderWritesTheCAFile(t *testing.T) {
-	e := testEntry()
-	e.CAFile = "/etc/kw/ingress-ca.pem"
-	if got := e.Render(); !strings.Contains(got, "--context prod --ca-file /etc/kw/ingress-ca.pem %h") {
-		t.Errorf("entry =\n%s\nwant the CA file in the ProxyCommand", got)
 	}
 }

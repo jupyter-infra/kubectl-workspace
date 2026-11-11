@@ -6,7 +6,9 @@ Distributed under the terms of the MIT license
 package testutil
 
 import (
+	"encoding/pem"
 	"net"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -36,4 +38,9 @@ func StartSilentListener(t *testing.T) string {
 		}
 	}()
 	return listener.Addr().String()
+}
+
+// certPEM returns a TLS test server's certificate as a PEM bundle.
+func certPEM(s *httptest.Server) string {
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.Certificate().Raw}))
 }

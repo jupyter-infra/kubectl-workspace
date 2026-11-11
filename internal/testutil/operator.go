@@ -11,7 +11,6 @@ package testutil
 
 import (
 	"encoding/json"
-	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -47,10 +46,10 @@ type RecordedRequest struct {
 // answers every request with one status and body, and records what it received.
 type FakeOperator struct {
 	server *httptest.Server
+	status int
+	body   string
 
 	mu       sync.Mutex
-	status   int
-	body     string
 	requests []RecordedRequest
 }
 
@@ -72,15 +71,13 @@ func (o *FakeOperator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ContentType:   r.Header.Get("Content-Type"),
 	}
 	_ = json.NewDecoder(r.Body).Decode(&rec.Body)
-
 	o.mu.Lock()
 	o.requests = append(o.requests, rec)
-	status, body := o.status, o.body
 	o.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = io.WriteString(w, body)
+	w.WriteHeader(o.status)
+	_, _ = io.WriteString(w, o.body)
 }
 
 // URL is the operator's https address.
@@ -90,7 +87,7 @@ func (o *FakeOperator) URL() string {
 
 // CAPEM is the certificate a client must trust to reach the operator.
 func (o *FakeOperator) CAPEM() string {
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: o.server.Certificate().Raw}))
+	return certPEM(o.server)
 }
 
 // RestConfig reaches the operator with a static bearer token and its CA.
@@ -102,21 +99,15 @@ func (o *FakeOperator) RestConfig(token string) *rest.Config {
 	}
 }
 
-// Requests returns a copy of the recorded requests.
-func (o *FakeOperator) Requests() []RecordedRequest {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return append([]RecordedRequest(nil), o.requests...)
-}
-
 // LastRequest returns the most recent request and fails the test when there is none.
 func (o *FakeOperator) LastRequest(t *testing.T) RecordedRequest {
 	t.Helper()
-	requests := o.Requests()
-	if len(requests) == 0 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if len(o.requests) == 0 {
 		t.Fatal("the operator received no request")
 	}
-	return requests[len(requests)-1]
+	return o.requests[len(o.requests)-1]
 }
 
 // ConnectionBody renders the operator's answer to a granted connection.

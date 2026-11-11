@@ -36,12 +36,12 @@ func TestConnectRelaysThroughTheDirectURL(t *testing.T) {
 	}
 }
 
-func TestConnectUsesTheOperatorsTokenInAHeader(t *testing.T) {
+func TestConnectUsesTheOperatorsTokenInAHeaderAndNeverLogsIt(t *testing.T) {
 	echo := testutil.NewEchoServer(t)
 	op := testutil.NewFakeOperator(t, http.StatusCreated,
 		testutil.ConnectionBody(echo.URL(sshPath).String()+"?token=abc.def"))
 	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
-	r := startConnect(t, "connect", "--stdio", "--kubeconfig", kubeconfig, alias)
+	r := startConnect(t, "-v", "connect", "--stdio", "--kubeconfig", kubeconfig, alias)
 
 	if got := r.echo(t, "hello"); got != "hello" {
 		t.Errorf("stdout = %q", got)
@@ -63,6 +63,12 @@ func TestConnectUsesTheOperatorsTokenInAHeader(t *testing.T) {
 	}
 	if upgrade.RawQuery != "" {
 		t.Errorf("WebSocket query = %q, want the token removed from the URL", upgrade.RawQuery)
+	}
+	if strings.Contains(r.stderr.String(), "abc.def") {
+		t.Errorf("stderr leaks the token: %q", r.stderr.String())
+	}
+	if !strings.Contains(r.stderr.String(), "connection granted") {
+		t.Errorf("stderr = %q, want the verbose progress lines", r.stderr.String())
 	}
 }
 
@@ -124,11 +130,7 @@ func TestConnectFailsFastWhenTheCredentialNeedsASignIn(t *testing.T) {
 		t.Skip("the stand-in plugin is a Unix sleep")
 	}
 	// A sleep stands in for a plugin waiting for the browser.
-	kubeconfig := testutil.Kubeconfig{
-		Server:    "https://127.0.0.1:1",
-		Namespace: "team-a",
-		Exec:      &testutil.ExecPlugin{Command: "sleep", Args: []string{"30"}},
-	}.Write(t)
+	kubeconfig := pluginKubeconfig(t, "sleep", "30")
 	tests := []struct {
 		name     string
 		context  string
@@ -171,11 +173,7 @@ func TestConnectAttachesTheSignInHintToAFailingPlugin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the stand-in plugin is a Unix shell")
 	}
-	kubeconfig := testutil.Kubeconfig{
-		Server:    "https://127.0.0.1:1",
-		Namespace: "team-a",
-		Exec:      &testutil.ExecPlugin{Command: "sh", Args: []string{"-c", "exit 3"}},
-	}.Write(t)
+	kubeconfig := pluginKubeconfig(t, "sh", "-c", "exit 3")
 
 	_, err := run(t, "connect", "--stdio", "--kubeconfig", kubeconfig, alias)
 	if err == nil {
@@ -191,18 +189,54 @@ func TestConnectAttachesTheSignInHintToAFailingPlugin(t *testing.T) {
 	}
 }
 
-func TestConnectEndsQuietlyWhenSignalled(t *testing.T) {
-	echo := testutil.NewEchoServer(t)
-	r := startConnect(t, "connect", "--stdio", "--url", echo.URL("/").String(), alias)
-	r.echo(t, "ping")
+// pluginKubeconfig writes a kubeconfig whose credential comes from running command.
+func pluginKubeconfig(t *testing.T, command string, args ...string) string {
+	t.Helper()
+	return testutil.Kubeconfig{
+		Server: "https://127.0.0.1:1", Namespace: "team-a", Exec: &testutil.ExecPlugin{Command: command, Args: args},
+	}.Write(t)
+}
 
-	// OpenSSH ends the ProxyCommand with SIGHUP, which cancels the command's context.
-	r.cancel()
-	if err := r.wait(t); err != nil {
-		t.Errorf("connect returned %v after the signal, want nil", err)
+// OpenSSH ends the ProxyCommand with SIGHUP, which cancels the command's context,
+// whichever phase the connection is in.
+func TestConnectEndsQuietlyWhenSignalled(t *testing.T) {
+	tests := []struct {
+		name  string
+		unix  bool
+		start func(t *testing.T) *connectRun
+	}{
+		{name: "during the session", start: func(t *testing.T) *connectRun {
+			echo := testutil.NewEchoServer(t)
+			r := startConnect(t, "connect", "--stdio", "--url", echo.URL("/").String(), alias)
+			r.echo(t, "ping")
+			return r
+		}},
+		{name: "during the sign-in", unix: true, start: func(t *testing.T) *connectRun {
+			kubeconfig := pluginKubeconfig(t, "sleep", "30")
+			r := startConnect(t, "connect", "--stdio", "--kubeconfig", kubeconfig, "--credential-timeout", "20s", alias)
+			time.Sleep(300 * time.Millisecond)
+			return r
+		}},
+		{name: "during the dial", start: func(t *testing.T) *connectRun {
+			r := startConnect(t, "connect", "--stdio", "--url", "ws://"+testutil.StartSilentListener(t)+"/", alias)
+			time.Sleep(200 * time.Millisecond)
+			return r
+		}},
 	}
-	if r.stderr.Len() != 0 {
-		t.Errorf("stderr = %q, want silence", r.stderr.String())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.unix && runtime.GOOS == "windows" {
+				t.Skip("the stand-in plugin is a Unix sleep")
+			}
+			r := tt.start(t)
+			r.cancel()
+			if err := r.wait(t); err != nil {
+				t.Errorf("connect returned %v after the signal, want nil", err)
+			}
+			if r.stderr.Len() != 0 {
+				t.Errorf("stderr = %q, want silence", r.stderr.String())
+			}
+		})
 	}
 }
 
@@ -213,40 +247,6 @@ func TestConnectDoesNotEchoATokenGivenInTheURL(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "SECRET-TOKEN") {
 		t.Errorf("error %q leaks the token", err)
-	}
-}
-
-func TestConnectEndsQuietlyWhenSignalledDuringTheSignIn(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in plugin is a Unix sleep")
-	}
-	kubeconfig := testutil.Kubeconfig{
-		Server:    "https://127.0.0.1:1",
-		Namespace: "team-a",
-		Exec:      &testutil.ExecPlugin{Command: "sleep", Args: []string{"30"}},
-	}.Write(t)
-	r := startConnect(t, "connect", "--stdio", "--kubeconfig", kubeconfig, "--credential-timeout", "20s", alias)
-
-	time.Sleep(300 * time.Millisecond)
-	r.cancel()
-	if err := r.wait(t); err != nil {
-		t.Errorf("connect returned %v after the signal, want nil", err)
-	}
-	if r.stderr.Len() != 0 {
-		t.Errorf("stderr = %q, want silence", r.stderr.String())
-	}
-}
-
-func TestConnectEndsQuietlyWhenSignalledDuringTheDial(t *testing.T) {
-	r := startConnect(t, "connect", "--stdio", "--url", "ws://"+testutil.StartSilentListener(t)+"/", alias)
-
-	time.Sleep(200 * time.Millisecond)
-	r.cancel()
-	if err := r.wait(t); err != nil {
-		t.Errorf("connect returned %v after the signal, want nil", err)
-	}
-	if r.stderr.Len() != 0 {
-		t.Errorf("stderr = %q, want silence", r.stderr.String())
 	}
 }
 
@@ -272,25 +272,6 @@ func TestConnectRejectsANonPositiveCredentialTimeout(t *testing.T) {
 	_, err := run(t, "connect", "--stdio", "--kubeconfig", staticKubeconfig(t), "--credential-timeout", "0", alias)
 	if err == nil || !strings.Contains(err.Error(), "--credential-timeout must be positive") {
 		t.Errorf("error = %v", err)
-	}
-}
-
-func TestConnectNeverWritesTheTokenToStderr(t *testing.T) {
-	echo := testutil.NewEchoServer(t)
-	op := testutil.NewFakeOperator(t, http.StatusCreated,
-		testutil.ConnectionBody(echo.URL(sshPath).String()+"?token=abc.def"))
-	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
-	r := startConnect(t, "-v", "connect", "--stdio", "--kubeconfig", kubeconfig, alias)
-
-	r.echo(t, "hello")
-	if err := r.finish(t); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(r.stderr.String(), "abc.def") {
-		t.Errorf("stderr leaks the token: %q", r.stderr.String())
-	}
-	if !strings.Contains(r.stderr.String(), "connection granted") {
-		t.Errorf("stderr = %q, want the verbose progress lines", r.stderr.String())
 	}
 }
 
