@@ -1,0 +1,139 @@
+# Workspace fixtures for the Kind suite: the namespaces, the Traefik middleware that
+# hands a connection's token to the auth middleware, an access strategy with the
+# WebSocket route and the published sidecar, a template with the SSH server image,
+# and one workspace. The suite replaces __PORT__ with the local port it forwards to
+# Traefik's TLS port before applying this file.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jupyter-k8s-shared
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-a
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: authmiddleware-bearer-auth
+  namespace: jupyter-k8s-system
+spec:
+  forwardAuth:
+    address: http://authmiddleware.jupyter-k8s-system:8080/bearer-auth
+    trustForwardHeader: false
+    authRequestHeaders:
+      - Authorization
+      - Cookie
+      - X-Forwarded-Uri
+      - X-Forwarded-Host
+      - X-Forwarded-Proto
+---
+apiVersion: workspace.jupyter.org/v1alpha1
+kind: WorkspaceAccessStrategy
+metadata:
+  name: ssh-ws
+  namespace: jupyter-k8s-shared
+spec:
+  displayName: SSH over WebSocket (Kind e2e)
+  createConnectionHandler: k8s-native
+  webSocketURLTemplate: "wss://127.0.0.1:__PORT__/workspaces/{{ .Workspace.Namespace }}/{{ .Workspace.Name }}/ssh-ws"
+  accessResourceTemplates:
+    - kind: IngressRoute
+      apiVersion: traefik.io/v1alpha1
+      namePrefix: ssh-ws-route
+      template: |
+        spec:
+          entryPoints:
+            - websecure
+          tls: {}
+          routes:
+            - match: "PathPrefix(`/workspaces/{{ .Workspace.Namespace }}/{{ .Workspace.Name }}/ssh-ws`)"
+              kind: Rule
+              middlewares:
+                - name: authmiddleware-bearer-auth
+                  namespace: jupyter-k8s-system
+              services:
+                - name: "{{ .Service.Name }}"
+                  namespace: "{{ .Service.Namespace }}"
+                  port: 8080
+  deploymentModifications:
+    podModifications:
+      additionalContainers:
+        - name: ws-proxy
+          image: ghcr.io/jupyter-infra/workspace-websocket-proxy:v0.1.0-rc.2
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: ws-proxy
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: LISTEN_ADDR
+              value: ":8080"
+            - name: TARGET_HOST
+              value: "127.0.0.1"
+            - name: TARGET_PORT
+              value: "2222"
+            - name: TARGET_HEALTH_INTERVAL
+              value: "3s"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+      exposedPorts:
+        - ws-proxy
+---
+apiVersion: workspace.jupyter.org/v1alpha1
+kind: WorkspaceTemplate
+metadata:
+  name: ssh-workspace
+  namespace: jupyter-k8s-shared
+spec:
+  displayName: SSH workspace (Kind e2e)
+  defaultImage: kubectl-workspace-e2e-workspace:local
+  appType: vscode
+  defaultAccessStrategy:
+    name: ssh-ws
+    namespace: jupyter-k8s-shared
+  defaultResources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  # The SSH server binds loopback, which the kubelet cannot probe; the sidecar's
+  # /health/target reports whether it has read the server's greeting.
+  defaultReadinessProbe:
+    httpGet:
+      path: /health/target
+      port: 8080
+    initialDelaySeconds: 3
+    periodSeconds: 5
+---
+apiVersion: workspace.jupyter.org/v1alpha1
+kind: Workspace
+metadata:
+  name: ws1
+  namespace: team-a
+spec:
+  displayName: ws1 (Kind e2e)
+  desiredStatus: Running
+  accessType: Public
+  templateRef:
+    name: ssh-workspace
+    namespace: jupyter-k8s-shared

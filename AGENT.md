@@ -90,6 +90,8 @@ the operator's dependency graph out of this binary.
 | `internal/tunnel/` | WebSocket dial with the token in a header, stdin/stdout relay |
 | `internal/testutil/` | Fakes shared by the tests |
 | `test/e2e/` | The system's `ssh` and `sftp` through the plugin against the published sidecar and SSH server images (`e2e` build tag) |
+| `test/e2e/kind/` | The plugin against a Kind cluster with the operator, the auth middleware and Traefik (`e2e` build tag) |
+| `test/e2e/internal/harness/` | Helpers both end-to-end suites share |
 
 ## Development
 
@@ -104,6 +106,8 @@ the operator's dependency graph out of this binary.
 - Tests: `make test`
 - End to end against the published images: `make test-e2e`, with `CONTAINER_TOOL=finch`
   on a Mac
+- End to end on Kind: `make test-e2e-kind-full`, or `make setup-e2e-kind` once and
+  `make test-e2e-kind` per run, with `CONTAINER_TOOL=finch` on a Mac
 - Lint: `make lint`, with fixes `make lint-fix`
 - Dependencies: `make deps`
 - Run against a sidecar without a cluster: `bin/kubectl-workspace connect --stdio
@@ -125,9 +129,20 @@ silence on stderr when the client closes and on SIGHUP.
 from the published carrier image, in two containers sharing one network namespace
 as they share a pod's, with the system's `ssh` and `sftp` running the plugin as the
 ProxyCommand through `--url`. It proves a command, its exit status, a terminal, a
-4 MiB transfer each way and an SFTP round trip. The operator is not in that rig, so
-the credential and connection request are covered by the unit tests only; the path
-through a cluster's ingress belongs to the platform's end-to-end suites.
+4 MiB transfer each way and an SFTP round trip. The operator is not in that rig; the
+Kind suite covers it.
+
+`test/e2e/kind` runs the plugin the way a deployment does: a Kind cluster with the
+operator chart from GHCR and token signing on, the auth middleware with bearer auth,
+and Traefik serving a certificate from a certificate authority of the rig's own, whose
+ForwardAuth middleware hands the connection's token to the auth middleware before the
+WebSocket reaches the published sidecar. The suite writes the SSH entry with
+`ssh-config --write --ca-file` against the cluster's kubeconfig, reaches Traefik's TLS
+port through a `kubectl port-forward`, and checks a command, the exit status, an SFTP
+round trip, `open --print-only`, and the refusals without the rig's CA, for a service
+account without access and for a stopped workspace. `make setup-e2e-kind` installs the
+cluster-level pieces at the versions pinned in the Makefile; the suite applies
+`test/e2e/testdata/kind/fixtures.yaml`.
 
 When adding a test:
 
@@ -137,7 +152,7 @@ When adding a test:
 - A fake another package will also need goes in `internal/testutil`; a fake one test
   needs stays in that test.
 - Nothing in the unit tests needs a cluster, `ssh` or `kubectl`; a check that needs
-  the real `ssh` belongs in `test/e2e`.
+  the real `ssh` belongs in `test/e2e`, one that needs the operator in `test/e2e/kind`.
 
 ### Before Submitting a PR
 

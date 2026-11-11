@@ -27,6 +27,57 @@ test: ## Run the tests with the race detector.
 test-e2e: ## Run ssh and sftp through the plugin against the published sidecar and SSH server images (needs $(CONTAINER_TOOL), ssh and sftp).
 	CONTAINER_TOOL=$(CONTAINER_TOOL) go test -tags e2e -count=1 -timeout 15m -v ./test/e2e/
 
+##@ Kind end-to-end rig: the operator with token signing on, the auth middleware and Traefik
+
+KIND ?= kind
+E2E_KIND_CLUSTER ?= kubectl-workspace-e2e
+E2E_OPERATOR_CHART_VERSION ?= 0.4.1
+E2E_CERT_MANAGER_CHART_VERSION ?= v1.21.3
+E2E_TRAEFIK_CHART_VERSION ?= 42.3.2
+E2E_WORKSPACE_IMAGE ?= kubectl-workspace-e2e-workspace:local
+ifeq ($(CONTAINER_TOOL),finch)
+export KIND_EXPERIMENTAL_PROVIDER = finch
+endif
+E2E_KUBECTL := kubectl --context kind-$(E2E_KIND_CLUSTER)
+E2E_HELM := helm --kube-context kind-$(E2E_KIND_CLUSTER)
+
+.PHONY: setup-e2e-kind
+setup-e2e-kind: ## Create the Kind cluster with cert-manager, the operator, the auth middleware and Traefik, and load the workspace image.
+	@$(KIND) get clusters 2>/dev/null | grep -qx '$(E2E_KIND_CLUSTER)' || $(KIND) create cluster --name $(E2E_KIND_CLUSTER) --wait 90s
+	helm repo add jetstack https://charts.jetstack.io --force-update
+	helm repo add traefik https://traefik.github.io/charts --force-update
+	$(E2E_HELM) upgrade --install cert-manager jetstack/cert-manager --version $(E2E_CERT_MANAGER_CHART_VERSION) \
+		--namespace cert-manager --create-namespace --set crds.enabled=true --set startupapicheck.enabled=false \
+		--wait --timeout 180s
+	$(E2E_HELM) upgrade --install jupyter-k8s oci://ghcr.io/jupyter-infra/charts/jupyter-k8s --version $(E2E_OPERATOR_CHART_VERSION) \
+		--namespace jupyter-k8s-system --create-namespace --set extensionApi.jwtSecret.enable=true --wait --timeout 240s
+	$(E2E_KUBECTL) wait --for=condition=Available --timeout=180s apiservice/v1alpha1.connection.workspace.jupyter.org
+	$(E2E_KUBECTL) apply -f test/e2e/testdata/kind/authmiddleware.yaml
+	$(E2E_HELM) upgrade --install traefik traefik/traefik --version $(E2E_TRAEFIK_CHART_VERSION) --namespace traefik --create-namespace \
+		--set service.spec.type=ClusterIP --set providers.kubernetesCRD.allowCrossNamespace=true \
+		--set tlsStore.default.defaultCertificate.secretName=traefik-e2e-tls --wait --timeout 180s
+	$(E2E_KUBECTL) apply -f test/e2e/testdata/kind/traefik-tls.yaml
+	$(E2E_KUBECTL) -n traefik wait --for=condition=Ready --timeout=120s certificate/traefik-e2e
+	$(E2E_KUBECTL) -n jupyter-k8s-system rollout status deployment/authmiddleware --timeout=180s
+	$(CONTAINER_TOOL) build -t $(E2E_WORKSPACE_IMAGE) -f test/e2e/testdata/workspace.Dockerfile test/e2e/testdata
+	mkdir -p $(HOME)/.cache/kubectl-workspace
+	$(CONTAINER_TOOL) save $(E2E_WORKSPACE_IMAGE) -o $(HOME)/.cache/kubectl-workspace/e2e-workspace.tar
+	$(KIND) load image-archive $(HOME)/.cache/kubectl-workspace/e2e-workspace.tar --name $(E2E_KIND_CLUSTER)
+
+.PHONY: test-e2e-kind
+test-e2e-kind: ## Run the plugin against the Kind rig through the operator, the auth middleware and Traefik (after setup-e2e-kind).
+	E2E_KIND_CLUSTER=$(E2E_KIND_CLUSTER) go test -tags e2e -count=1 -timeout 20m -v ./test/e2e/kind/
+
+.PHONY: cleanup-e2e-kind
+cleanup-e2e-kind: ## Delete the Kind cluster of the end-to-end rig.
+	$(KIND) delete cluster --name $(E2E_KIND_CLUSTER)
+
+.PHONY: test-e2e-kind-full
+test-e2e-kind-full: ## setup-e2e-kind, test-e2e-kind and cleanup-e2e-kind in one go.
+	$(MAKE) setup-e2e-kind
+	$(MAKE) test-e2e-kind || { $(MAKE) cleanup-e2e-kind; exit 1; }
+	$(MAKE) cleanup-e2e-kind
+
 .PHONY: lint
 lint: ## Run golangci-lint.
 	golangci-lint run

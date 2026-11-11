@@ -1,0 +1,371 @@
+//go:build e2e
+
+/*
+Copyright (c) Amazon Web Services
+Distributed under the terms of the MIT license
+*/
+
+// Package kind runs the plugin against a Kind cluster that carries the operator with
+// token signing on, the auth middleware and Traefik with a certificate from the rig's
+// own certificate authority: the path a connection takes in a deployment. `make
+// setup-e2e-kind` installs those cluster-level pieces; this package applies the
+// workspace fixtures, writes the SSH entry with the plugin and the rig's CA, and
+// drives ssh, sftp and the plugin's commands with the cluster's own kubeconfig.
+package kind
+
+import (
+	"bytes"
+	"crypto/rand"
+	"crypto/tls"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jupyter-infra/kubectl-workspace/test/e2e/internal/harness"
+)
+
+const (
+	defaultCluster = "kubectl-workspace-e2e"
+	namespace      = "team-a"
+	workspace      = "ws1"
+	traefikNS      = "traefik"
+	// readyTimeout bounds the workspace's start; the sidecar image is pulled from
+	// GHCR on a fresh cluster.
+	readyTimeout = 4 * time.Minute
+)
+
+// rig is the cluster's kubeconfig, the plugin binary, the port-forward to Traefik,
+// the rig's certificate authority and the SSH entry the plugin wrote.
+type rig struct {
+	dir        string
+	kubeconfig string
+	context    string
+	plugin     string
+	manifest   string
+	forward    *exec.Cmd
+	caFile     string
+	sshConfig  string
+	knownHosts string
+	alias      string
+}
+
+var shared *rig
+
+func TestMain(m *testing.M) {
+	r, err := startRig()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "kind rig:", err)
+		r.cleanup()
+		os.Exit(1)
+	}
+	shared = r
+	code := m.Run()
+	r.cleanup()
+	os.Exit(code)
+}
+
+func startRig() (*rig, error) {
+	for _, bin := range []string{"kubectl", "ssh", "sftp", "go"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			return &rig{}, fmt.Errorf("%s is not on PATH", bin)
+		}
+	}
+	cluster := os.Getenv("E2E_KIND_CLUSTER")
+	if cluster == "" {
+		cluster = defaultCluster
+	}
+	r := &rig{context: "kind-" + cluster}
+	dir, err := os.MkdirTemp("", "kubectl-workspace-kind-")
+	if err != nil {
+		return r, err
+	}
+	r.dir = dir
+
+	// The cluster's admin kubeconfig in a file of the rig's own, so the user's
+	// kubeconfig is never read or written.
+	r.kubeconfig = filepath.Join(dir, "kubeconfig")
+	out, err := harness.Command("kubectl", "config", "view", "--raw", "--minify", "--flatten", "--context", r.context)
+	if err != nil {
+		return r, fmt.Errorf("exporting the kubeconfig for %s: %v\n%s", r.context, err, out)
+	}
+	if err := os.WriteFile(r.kubeconfig, []byte(out), 0o600); err != nil {
+		return r, err
+	}
+	r.plugin = filepath.Join(dir, "kubectl-workspace")
+	if err := harness.BuildPlugin(r.plugin); err != nil {
+		return r, err
+	}
+
+	// Traefik's TLS port is reached through a port-forward, so the cluster needs no
+	// port mapping of its own and the suite runs against any Kind cluster.
+	port, err := harness.FreePort()
+	if err != nil {
+		return r, err
+	}
+	var forwardOutput bytes.Buffer
+	r.forward = exec.Command("kubectl", "--kubeconfig", r.kubeconfig, "-n", traefikNS, "port-forward", "svc/traefik", port+":443")
+	r.forward.Stdout, r.forward.Stderr = &forwardOutput, &forwardOutput
+	if err := r.forward.Start(); err != nil {
+		return r, fmt.Errorf("starting the port-forward to Traefik: %v", err)
+	}
+	if err := harness.Poll(60*time.Second, 500*time.Millisecond, func() (bool, string) {
+		// Only whether Traefik answers; the certificate is checked by the plugin later.
+		conn, err := tls.Dial("tcp", "127.0.0.1:"+port, &tls.Config{InsecureSkipVerify: true})
+		if err != nil {
+			return false, err.Error()
+		}
+		_ = conn.Close()
+		return true, ""
+	}); err != nil {
+		return r, fmt.Errorf("Traefik is not answering through the port-forward: %v\n%s", err, forwardOutput.String())
+	}
+
+	// The rig's certificate authority, which the plugin is told to trust.
+	caData, err := r.kubectl("-n", traefikNS, "get", "secret", "traefik-e2e-tls", "-o", `jsonpath={.data.ca\.crt}`)
+	if err != nil {
+		return r, fmt.Errorf("reading the rig's CA: %v\n%s", err, caData)
+	}
+	ca, err := base64.StdEncoding.DecodeString(strings.TrimSpace(caData))
+	if err != nil || len(ca) == 0 {
+		return r, fmt.Errorf("the rig's CA secret carries no ca.crt (%v)", err)
+	}
+	r.caFile = filepath.Join(dir, "ca.crt")
+	if err := os.WriteFile(r.caFile, ca, 0o600); err != nil {
+		return r, err
+	}
+
+	// The operator's webhook can still be warming up right after setup, so an apply
+	// it does not answer is retried; one it denies is final.
+	fixtures, err := os.ReadFile(filepath.Join("..", "testdata", "kind", "fixtures.yaml"))
+	if err != nil {
+		return r, err
+	}
+	r.manifest = strings.ReplaceAll(string(fixtures), "__PORT__", port)
+	var denied error
+	err = harness.Poll(2*time.Minute, 5*time.Second, func() (bool, string) {
+		out, err := r.kubectlStdin(r.manifest, "apply", "-f", "-")
+		if err != nil && strings.Contains(out, "denied the request") {
+			denied = fmt.Errorf("%s", strings.TrimSpace(out))
+			return true, ""
+		}
+		return err == nil, strings.TrimSpace(out)
+	})
+	if err == nil {
+		err = denied
+	}
+	if err != nil {
+		return r, fmt.Errorf("applying the fixtures: %v", err)
+	}
+	if out, err := r.kubectl("-n", namespace, "wait", "--for=condition=Available",
+		"--timeout="+readyTimeout.String(), "workspace/"+workspace); err != nil {
+		pods, _ := r.kubectl("-n", namespace, "get", "pods", "-o", "wide")
+		status, _ := r.kubectl("-n", namespace, "get", "workspace", workspace, "-o", "yaml")
+		return r, fmt.Errorf("the workspace did not become Available: %v\n%s\npods:\n%s\nworkspace:\n%s", err, out, pods, status)
+	}
+
+	// The entry is written by the plugin itself, into a file of the rig's own.
+	r.sshConfig = filepath.Join(dir, "ssh_config")
+	r.knownHosts = filepath.Join(dir, "known_hosts")
+	if out, err := harness.Command(r.plugin, "ssh-config", "--write", "--ssh-config-file", r.sshConfig,
+		"--kubeconfig", r.kubeconfig, "--context", r.context, "--command", r.plugin, "--ca-file", r.caFile); err != nil {
+		return r, fmt.Errorf("writing the SSH entry: %v\n%s", err, out)
+	}
+	r.alias = workspace + "." + namespace + "." + r.context + ".jk8s"
+	return r, nil
+}
+
+func (r *rig) cleanup() {
+	if r.forward != nil && r.forward.Process != nil {
+		_ = r.forward.Process.Kill()
+		_ = r.forward.Wait()
+	}
+	if r.manifest != "" && os.Getenv("E2E_KIND_KEEP") == "" {
+		_, _ = r.kubectlStdin(r.manifest, "delete", "--ignore-not-found", "--wait=false", "-f", "-")
+	}
+	if r.dir != "" {
+		_ = os.RemoveAll(r.dir)
+	}
+}
+
+func (r *rig) kubectl(args ...string) (string, error) {
+	return harness.Command("kubectl", append([]string{"--kubeconfig", r.kubeconfig}, args...)...)
+}
+
+func (r *rig) kubectlStdin(stdin string, args ...string) (string, error) {
+	return harness.CommandWithStdin(stdin, "kubectl", append([]string{"--kubeconfig", r.kubeconfig}, args...)...)
+}
+
+// mustKubectl runs kubectl and fails the test on an error.
+func (r *rig) mustKubectl(t *testing.T, args ...string) string {
+	t.Helper()
+	out, err := r.kubectl(args...)
+	if err != nil {
+		t.Fatalf("kubectl %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return out
+}
+
+// sshOptions keeps host keys in the rig's own file and silences OpenSSH's notices,
+// so stderr carries only what the plugin writes.
+func (r *rig) sshOptions() []string {
+	return []string{"-o", "UserKnownHostsFile=" + r.knownHosts, "-o", "LogLevel=ERROR"}
+}
+
+// ssh runs the system's ssh through an entry the plugin wrote.
+func (r *rig) ssh(t *testing.T, sshConfig string, stdin []byte, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	return harness.SSH(t, sshConfig, stdin, append(r.sshOptions(), args...)...)
+}
+
+// serviceAccountKubeconfig returns a kubeconfig whose user is a service account with
+// no RBAC, under the context "nobody".
+func (r *rig) serviceAccountKubeconfig(t *testing.T, name string) string {
+	t.Helper()
+	account := fmt.Sprintf("apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: %s\n  namespace: %s\n", name, namespace)
+	if out, err := r.kubectlStdin(account, "apply", "-f", "-"); err != nil {
+		t.Fatalf("creating the service account: %v\n%s", err, out)
+	}
+	token := strings.TrimSpace(r.mustKubectl(t, "-n", namespace, "create", "token", name, "--duration=15m"))
+	server := strings.TrimSpace(r.mustKubectl(t, "config", "view", "--raw", "-o", "jsonpath={.clusters[0].cluster.server}"))
+	caData := strings.TrimSpace(r.mustKubectl(t, "config", "view", "--raw", "-o",
+		"jsonpath={.clusters[0].cluster.certificate-authority-data}"))
+	ca, err := base64.StdEncoding.DecodeString(caData)
+	if err != nil {
+		t.Fatalf("the cluster's CA is not base64: %v", err)
+	}
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "ca.crt")
+	if err := os.WriteFile(caPath, ca, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "kubeconfig")
+	for _, args := range [][]string{
+		{"set-cluster", "nobody", "--server=" + server, "--certificate-authority=" + caPath, "--embed-certs=true"},
+		{"set-credentials", "nobody", "--token=" + token},
+		{"set-context", "nobody", "--cluster=nobody", "--user=nobody", "--namespace=" + namespace},
+		{"use-context", "nobody"},
+	} {
+		if out, err := harness.Command("kubectl", append([]string{"--kubeconfig", file, "config"}, args...)...); err != nil {
+			t.Fatalf("kubectl config %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	return file
+}
+
+func TestSSHReachesTheWorkspaceThroughTheIngress(t *testing.T) {
+	stdout, stderr, code := shared.ssh(t, shared.sshConfig, nil, shared.alias, "echo kind-ok")
+	if code != 0 || stdout != "kind-ok\n" {
+		t.Errorf("ssh exit %d, stdout %q (stderr %q)", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want silence on a clean session", stderr)
+	}
+}
+
+func TestSSHPassesTheExitStatusThrough(t *testing.T) {
+	_, stderr, code := shared.ssh(t, shared.sshConfig, nil, shared.alias, "exit 7")
+	if code != 7 {
+		t.Errorf("ssh exit %d, want the command's 7 (stderr %q)", code, stderr)
+	}
+}
+
+func TestSFTPRoundTripsAFile(t *testing.T) {
+	dir := t.TempDir()
+	local := filepath.Join(dir, "upload.bin")
+	payload := make([]byte, 64<<10)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(local, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	back := filepath.Join(dir, "download.bin")
+	batch := filepath.Join(dir, "batch")
+	if err := os.WriteFile(batch, []byte("put "+local+" /home/jovyan/kind.bin\nget /home/jovyan/kind.bin "+back+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := harness.SFTP(shared.sshConfig, batch, shared.alias, shared.sshOptions()...)
+	if err != nil {
+		t.Fatalf("sftp: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(back)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("the file came back with %d bytes, want %d identical bytes", len(got), len(payload))
+	}
+}
+
+func TestOpenPrintsTheLinkForTheInstalledEntry(t *testing.T) {
+	out, err := harness.Command(shared.plugin, "open", "--print-only", "--kubeconfig", shared.kubeconfig,
+		"--context", shared.context, "--ssh-config-file", shared.sshConfig, "--namespace", namespace, workspace)
+	if err != nil {
+		t.Fatalf("open --print-only: %v\n%s", err, out)
+	}
+	for _, want := range []string{"vscode://vscode-remote/ssh-remote+" + shared.alias, "ssh " + shared.alias} {
+		if !strings.Contains(out, want) {
+			t.Errorf("open printed %q, want it to contain %q", out, want)
+		}
+	}
+}
+
+func TestConnectRefusesTheIngressWithoutItsCA(t *testing.T) {
+	sshConfig := filepath.Join(t.TempDir(), "ssh_config")
+	if out, err := harness.Command(shared.plugin, "ssh-config", "--write", "--ssh-config-file", sshConfig,
+		"--kubeconfig", shared.kubeconfig, "--context", shared.context, "--command", shared.plugin); err != nil {
+		t.Fatalf("writing the entry without a CA file: %v\n%s", err, out)
+	}
+
+	_, stderr, code := shared.ssh(t, sshConfig, nil, shared.alias, "true")
+	if code == 0 {
+		t.Fatal("ssh succeeded without the rig's CA, so the ingress certificate was not verified")
+	}
+	if !strings.Contains(stderr, "certificate") {
+		t.Errorf("stderr = %q, want the certificate verification failure", stderr)
+	}
+}
+
+func TestConnectIsRefusedWithoutAccessToTheWorkspace(t *testing.T) {
+	nobody := shared.serviceAccountKubeconfig(t, "e2e-nobody")
+	sshConfig := filepath.Join(t.TempDir(), "ssh_config")
+	if out, err := harness.Command(shared.plugin, "ssh-config", "--write", "--ssh-config-file", sshConfig,
+		"--kubeconfig", nobody, "--context", "nobody", "--command", shared.plugin, "--ca-file", shared.caFile); err != nil {
+		t.Fatalf("writing the entry for the service account: %v\n%s", err, out)
+	}
+
+	_, stderr, code := shared.ssh(t, sshConfig, nil, workspace+"."+namespace+".nobody.jk8s", "true")
+	if code == 0 {
+		t.Fatal("ssh succeeded for a service account without access to the workspace")
+	}
+	if !strings.Contains(stderr, "HTTP 403") {
+		t.Errorf("stderr = %q, want the refusal with HTTP 403", stderr)
+	}
+}
+
+// TestConnectIsRefusedWhenTheWorkspaceIsStopped runs last: it stops the only workspace.
+func TestConnectIsRefusedWhenTheWorkspaceIsStopped(t *testing.T) {
+	shared.mustKubectl(t, "-n", namespace, "patch", "workspace", workspace, "--type", "merge",
+		"-p", `{"spec":{"desiredStatus":"Stopped"}}`)
+	if err := harness.Poll(2*time.Minute, 2*time.Second, func() (bool, string) {
+		out, _ := shared.kubectl("-n", namespace, "get", "workspace", workspace, "-o",
+			`jsonpath={.status.conditions[?(@.type=="Available")].status}`)
+		return strings.TrimSpace(out) != "True", "Available=" + strings.TrimSpace(out)
+	}); err != nil {
+		t.Fatalf("the workspace did not leave Available: %v", err)
+	}
+
+	_, stderr, code := shared.ssh(t, shared.sshConfig, nil, shared.alias, "true")
+	if code == 0 {
+		t.Fatal("ssh succeeded against a stopped workspace")
+	}
+	if !strings.Contains(stderr, "HTTP 400") || !strings.Contains(stderr, "not available") {
+		t.Errorf("stderr = %q, want the operator's refusal of a workspace that is not available", stderr)
+	}
+}

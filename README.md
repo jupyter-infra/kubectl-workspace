@@ -171,6 +171,8 @@ Run `ssh -v <alias>`: the plugin's messages appear in the output, prefixed
 - Tests with the race detector: `make test`
 - End to end, `ssh` and `sftp` through the plugin against the published sidecar and
   SSH server images: `make test-e2e` (needs docker or finch, `ssh` and `sftp`)
+- End to end through a Kind cluster with the operator, the auth middleware and Traefik:
+  `make test-e2e-kind-full` (needs kind, helm and kubectl as well)
 - Lint: `make lint`
 
 [AGENT.md](AGENT.md) describes the packages, their invariants and the tests;

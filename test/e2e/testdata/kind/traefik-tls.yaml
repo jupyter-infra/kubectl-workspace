@@ -1,0 +1,50 @@
+# TLS for the Kind rig's ingress: a certificate authority of the rig's own and a
+# certificate for 127.0.0.1, both issued by cert-manager, which Traefik serves as its
+# default certificate. The operator returns wss:// URLs unconditionally, so the
+# ingress has to speak TLS; the suite hands the CA to the plugin with --ca-file.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: kubectl-workspace-e2e-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kubectl-workspace-e2e-ca
+  namespace: traefik
+spec:
+  isCA: true
+  commonName: kubectl-workspace e2e CA
+  secretName: kubectl-workspace-e2e-ca
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: kubectl-workspace-e2e-selfsigned
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kubectl-workspace-e2e-ca
+  namespace: traefik
+spec:
+  ca:
+    secretName: kubectl-workspace-e2e-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: traefik-e2e
+  namespace: traefik
+spec:
+  secretName: traefik-e2e-tls
+  dnsNames:
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: kubectl-workspace-e2e-ca
+    kind: Issuer

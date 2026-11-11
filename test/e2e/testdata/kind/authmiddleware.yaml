@@ -1,0 +1,143 @@
+# The auth middleware for the Kind rig, with OAuth off and bearer-token auth on, so
+# its /bearer-auth route verifies operator-minted tokens through BearerTokenReview.
+# In a deployment the aws-oidc chart installs it; this is that deployment's shape with
+# the OAuth parts removed.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jupyter-k8s-authmiddleware
+  namespace: jupyter-k8s-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: authmiddleware-role
+rules:
+  - apiGroups: ["connection.workspace.jupyter.org"]
+    resources: ["connectionaccessreviews", "bearertokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: authmiddleware-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: authmiddleware-role
+subjects:
+  - kind: ServiceAccount
+    name: jupyter-k8s-authmiddleware
+    namespace: jupyter-k8s-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: authmiddleware-secret-reader
+  namespace: jupyter-k8s-system
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["authmiddleware-secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: authmiddleware-secret-reader
+  namespace: jupyter-k8s-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: authmiddleware-secret-reader
+subjects:
+  - kind: ServiceAccount
+    name: jupyter-k8s-authmiddleware
+    namespace: jupyter-k8s-system
+---
+# The middleware's own cookie-signing key; a throwaway value for the rig.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: authmiddleware-secrets
+  namespace: jupyter-k8s-system
+type: Opaque
+data:
+  jwt-signing-key-1793902106: "dCM3pokCxA+aHKi55bdkNvaXn48l9xImuYwIiMjco/9xKBJFAkb6sEtPgLYTR322"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authmiddleware
+  namespace: jupyter-k8s-system
+spec:
+  type: ClusterIP
+  selector:
+    app: authmiddleware
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authmiddleware
+  namespace: jupyter-k8s-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: authmiddleware
+  template:
+    metadata:
+      labels:
+        app: authmiddleware
+    spec:
+      serviceAccountName: jupyter-k8s-authmiddleware
+      containers:
+        - name: authmiddleware
+          image: ghcr.io/jupyter-infra/jupyter-k8s-authmiddleware:v0.4.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 5
+          env:
+            - name: PORT
+              value: "8080"
+            - name: NAMESPACE
+              value: "jupyter-k8s-system"
+            - name: ENABLE_OAUTH
+              value: "false"
+            - name: ENABLE_BEARER_URL_AUTH
+              value: "true"
+            - name: JWT_SECRET_NAME
+              value: "authmiddleware-secrets"
+            - name: JWT_ISSUER
+              value: "jupyter-k8s-auth"
+            - name: JWT_AUDIENCE
+              value: "workspace-users"
+            - name: COOKIE_SECURE
+              value: "false"
+            - name: COOKIE_DOMAIN
+              value: "localhost"
+            - name: PATH_REGEX_PATTERN
+              value: "^(/workspaces/[^/]+/[^/]+)(?:/.*)?$"
+            - name: WORKSPACE_NAMESPACE_PATH_REGEX
+              value: "^/workspaces/([^/]+)/[^/]+"
+            - name: WORKSPACE_NAME_PATH_REGEX
+              value: "^/workspaces/[^/]+/([^/]+)"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
