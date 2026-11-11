@@ -26,10 +26,7 @@ const (
 
 // Command runs name with args and returns its combined output.
 func Command(name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
-	return string(out), err
+	return CommandWithStdin("", name, args...)
 }
 
 // Output runs name with args and returns its stdout alone; stderr goes into the error.

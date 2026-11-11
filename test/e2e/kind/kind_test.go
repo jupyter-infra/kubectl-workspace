@@ -10,12 +10,11 @@ Distributed under the terms of the MIT license
 // own certificate authority: the path a connection takes in a deployment. `make
 // setup-e2e-kind` installs those cluster-level pieces; this package applies the
 // workspace fixtures, writes the SSH entry with the plugin and the rig's CA, and
-// drives ssh, sftp and the plugin's commands with the cluster's own kubeconfig.
+// drives ssh and the plugin's commands with the cluster's own kubeconfig.
 package kind
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -48,6 +47,7 @@ type rig struct {
 	plugin     string
 	manifest   string
 	forward    *exec.Cmd
+	port       string
 	caFile     string
 	sshConfig  string
 	knownHosts string
@@ -107,6 +107,7 @@ func startRig() (*rig, error) {
 	if err != nil {
 		return r, err
 	}
+	r.port = port
 	var forwardOutput bytes.Buffer
 	r.forward = exec.Command("kubectl", "--kubeconfig", r.kubeconfig, "-n", traefikNS, "port-forward", "svc/traefik", port+":443")
 	dieWithParent(r.forward)
@@ -171,9 +172,8 @@ func startRig() (*rig, error) {
 
 	r.sshConfig = filepath.Join(dir, "ssh_config")
 	r.knownHosts = filepath.Join(dir, "known_hosts")
-	if out, err := harness.Command(r.plugin, "ssh-config", "--write", "--ssh-config-file", r.sshConfig,
-		"--kubeconfig", r.kubeconfig, "--context", r.context, "--command", r.plugin, "--ca-file", r.caFile); err != nil {
-		return r, fmt.Errorf("writing the SSH entry: %v\n%s", err, out)
+	if err := r.writeEntry(r.sshConfig, r.kubeconfig, r.context, "--ca-file", r.caFile); err != nil {
+		return r, err
 	}
 	r.alias = workspace + "." + namespace + "." + r.context + ".jk8s"
 	return r, nil
@@ -187,7 +187,8 @@ func (r *rig) cleanup() {
 		_ = r.forward.Wait()
 	}
 	if os.Getenv("E2E_KIND_KEEP") != "" {
-		fmt.Fprintf(os.Stderr, "kind rig kept: fixtures in the cluster, files in %s\n", r.dir)
+		fmt.Fprintf(os.Stderr, "kind rig kept: fixtures in the cluster, files in %s; its ssh_config needs\n"+
+			"  kubectl --kubeconfig %s -n %s port-forward svc/traefik %s:443\n", r.dir, r.kubeconfig, traefikNS, r.port)
 		return
 	}
 	if r.manifest != "" {
@@ -216,6 +217,16 @@ func (r *rig) mustKubectl(t *testing.T, args ...string) string {
 	return out
 }
 
+// writeEntry has the plugin write the SSH entry for the kubeconfig context into path.
+func (r *rig) writeEntry(path, kubeconfig, context string, extra ...string) error {
+	args := append([]string{"ssh-config", "--write", "--ssh-config-file", path,
+		"--kubeconfig", kubeconfig, "--context", context, "--command", r.plugin}, extra...)
+	if out, err := harness.Command(r.plugin, args...); err != nil {
+		return fmt.Errorf("writing the SSH entry: %v\n%s", err, out)
+	}
+	return nil
+}
+
 // sshOptions keeps host keys in the rig's own file and silences OpenSSH's notices,
 // so stderr carries only what the plugin writes.
 func (r *rig) sshOptions() []string {
@@ -223,9 +234,9 @@ func (r *rig) sshOptions() []string {
 }
 
 // ssh runs the system's ssh through an entry the plugin wrote.
-func (r *rig) ssh(t *testing.T, sshConfig string, stdin []byte, args ...string) (stdout, stderr string, code int) {
+func (r *rig) ssh(t *testing.T, sshConfig string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	return harness.SSH(t, sshConfig, stdin, append(r.sshOptions(), args...)...)
+	return harness.SSH(t, sshConfig, nil, append(r.sshOptions(), args...)...)
 }
 
 // serviceAccountKubeconfig returns a kubeconfig whose user is a service account with
@@ -264,48 +275,12 @@ func (r *rig) serviceAccountKubeconfig(t *testing.T, name string) string {
 }
 
 func TestSSHReachesTheWorkspaceThroughTheIngress(t *testing.T) {
-	stdout, stderr, code := shared.ssh(t, shared.sshConfig, nil, shared.alias, "echo kind-ok")
+	stdout, stderr, code := shared.ssh(t, shared.sshConfig, shared.alias, "echo kind-ok")
 	if code != 0 || stdout != "kind-ok\n" {
 		t.Errorf("ssh exit %d, stdout %q (stderr %q)", code, stdout, stderr)
 	}
 	if stderr != "" {
 		t.Errorf("stderr = %q, want silence on a clean session", stderr)
-	}
-}
-
-func TestSSHPassesTheExitStatusThrough(t *testing.T) {
-	_, stderr, code := shared.ssh(t, shared.sshConfig, nil, shared.alias, "exit 7")
-	if code != 7 {
-		t.Errorf("ssh exit %d, want the command's 7 (stderr %q)", code, stderr)
-	}
-}
-
-func TestSFTPRoundTripsAFile(t *testing.T) {
-	dir := t.TempDir()
-	local := filepath.Join(dir, "upload.bin")
-	payload := make([]byte, 64<<10)
-	if _, err := rand.Read(payload); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(local, payload, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	back := filepath.Join(dir, "download.bin")
-	batch := filepath.Join(dir, "batch")
-	if err := os.WriteFile(batch, []byte("put "+local+" /home/jovyan/kind.bin\nget /home/jovyan/kind.bin "+back+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := harness.SFTP(shared.sshConfig, batch, shared.alias, shared.sshOptions()...)
-	if err != nil {
-		t.Fatalf("sftp: %v\n%s", err, out)
-	}
-	got, err := os.ReadFile(back)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, payload) {
-		t.Errorf("the file came back with %d bytes, want %d identical bytes", len(got), len(payload))
 	}
 }
 
@@ -324,12 +299,11 @@ func TestOpenPrintsTheLinkForTheInstalledEntry(t *testing.T) {
 
 func TestConnectRefusesTheIngressWithoutItsCA(t *testing.T) {
 	sshConfig := filepath.Join(t.TempDir(), "ssh_config")
-	if out, err := harness.Command(shared.plugin, "ssh-config", "--write", "--ssh-config-file", sshConfig,
-		"--kubeconfig", shared.kubeconfig, "--context", shared.context, "--command", shared.plugin); err != nil {
-		t.Fatalf("writing the entry without a CA file: %v\n%s", err, out)
+	if err := shared.writeEntry(sshConfig, shared.kubeconfig, shared.context); err != nil {
+		t.Fatal(err)
 	}
 
-	_, stderr, code := shared.ssh(t, sshConfig, nil, shared.alias, "true")
+	_, stderr, code := shared.ssh(t, sshConfig, shared.alias, "true")
 	if code == 0 {
 		t.Fatal("ssh succeeded without the rig's CA, so the ingress certificate was not verified")
 	}
@@ -341,12 +315,11 @@ func TestConnectRefusesTheIngressWithoutItsCA(t *testing.T) {
 func TestConnectIsRefusedWithoutAccessToTheWorkspace(t *testing.T) {
 	nobody := shared.serviceAccountKubeconfig(t, "e2e-nobody")
 	sshConfig := filepath.Join(t.TempDir(), "ssh_config")
-	if out, err := harness.Command(shared.plugin, "ssh-config", "--write", "--ssh-config-file", sshConfig,
-		"--kubeconfig", nobody, "--context", "nobody", "--command", shared.plugin, "--ca-file", shared.caFile); err != nil {
-		t.Fatalf("writing the entry for the service account: %v\n%s", err, out)
+	if err := shared.writeEntry(sshConfig, nobody, "nobody", "--ca-file", shared.caFile); err != nil {
+		t.Fatal(err)
 	}
 
-	_, stderr, code := shared.ssh(t, sshConfig, nil, workspace+"."+namespace+".nobody.jk8s", "true")
+	_, stderr, code := shared.ssh(t, sshConfig, workspace+"."+namespace+".nobody.jk8s", "true")
 	if code == 0 {
 		t.Fatal("ssh succeeded for a service account without access to the workspace")
 	}
@@ -355,14 +328,17 @@ func TestConnectIsRefusedWithoutAccessToTheWorkspace(t *testing.T) {
 	}
 }
 
-// TestConnectIsRefusedWhenTheWorkspaceIsStopped runs last: it stops the only workspace.
 func TestConnectIsRefusedWhenTheWorkspaceIsStopped(t *testing.T) {
-	shared.mustKubectl(t, "-n", namespace, "patch", "workspace", workspace, "--type", "merge",
-		"-p", `{"spec":{"desiredStatus":"Stopped"}}`)
+	setDesiredStatus := func(status string) {
+		shared.mustKubectl(t, "-n", namespace, "patch", "workspace", workspace, "--type", "merge",
+			"-p", fmt.Sprintf(`{"spec":{"desiredStatus":%q}}`, status))
+	}
+	setDesiredStatus("Stopped")
+	t.Cleanup(func() { setDesiredStatus("Running") })
 	// The operator answers from an informer cache, so the refusal is polled for
 	// rather than inferred from the Workspace status.
 	if err := harness.Poll(2*time.Minute, 2*time.Second, func() (bool, string) {
-		_, stderr, code := shared.ssh(t, shared.sshConfig, nil, shared.alias, "true")
+		_, stderr, code := shared.ssh(t, shared.sshConfig, shared.alias, "true")
 		refused := code != 0 && strings.Contains(stderr, "HTTP 400") && strings.Contains(stderr, "not available")
 		return refused, fmt.Sprintf("exit %d, stderr %q", code, stderr)
 	}); err != nil {

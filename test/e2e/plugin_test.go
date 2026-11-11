@@ -36,41 +36,36 @@ const (
 	startupTimeout = 90 * time.Second
 )
 
-// rig is the plugin binary, the two containers and the SSH configuration that
-// routes the alias through the plugin.
-type rig struct {
-	tool      string
-	sshConfig string
-	proxyAddr string
-}
-
-var shared *rig
+// sshConfig routes the alias through the plugin to the sidecar container.
+var sshConfig string
 
 func TestMain(m *testing.M) {
-	r, cleanup, err := startRig()
+	config, cleanup, err := startRig()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "e2e rig:", err)
 		os.Exit(1)
 	}
-	shared = r
+	sshConfig = config
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
 }
 
-func startRig() (*rig, func(), error) {
+// startRig builds the plugin, starts the two containers and writes the ssh_config
+// file, returning its path and the function that removes it all.
+func startRig() (string, func(), error) {
 	tool := os.Getenv("CONTAINER_TOOL")
 	if tool == "" {
 		tool = "docker"
 	}
 	for _, bin := range []string{tool, "ssh", "sftp", "go"} {
 		if _, err := exec.LookPath(bin); err != nil {
-			return nil, nil, fmt.Errorf("%s is not on PATH", bin)
+			return "", nil, fmt.Errorf("%s is not on PATH", bin)
 		}
 	}
 	dir, err := os.MkdirTemp("", "kubectl-workspace-e2e-")
 	if err != nil {
-		return nil, nil, err
+		return "", nil, err
 	}
 	var containers []string
 	cleanup := func() {
@@ -79,9 +74,9 @@ func startRig() (*rig, func(), error) {
 		}
 		_ = os.RemoveAll(dir)
 	}
-	fail := func(err error) (*rig, func(), error) {
+	fail := func(err error) (string, func(), error) {
 		cleanup()
-		return nil, nil, err
+		return "", nil, err
 	}
 
 	plugin := filepath.Join(dir, "kubectl-workspace")
@@ -123,13 +118,13 @@ func startRig() (*rig, func(), error) {
 	// The entry is written by hand rather than by `ssh-config`, which has no --url:
 	// the operator is not in this rig. Host keys are not checked, since the server
 	// generates a fresh one on every start.
-	sshConfig := filepath.Join(dir, "ssh_config")
+	config := filepath.Join(dir, "ssh_config")
 	entry := fmt.Sprintf("Host *.e2e.jk8s\n  User jovyan\n  ProxyCommand %s connect --stdio --url ws://%s/ %%h\n"+
 		"  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n  LogLevel ERROR\n", plugin, proxyAddr)
-	if err := os.WriteFile(sshConfig, []byte(entry), 0o600); err != nil {
+	if err := os.WriteFile(config, []byte(entry), 0o600); err != nil {
 		return fail(err)
 	}
-	return &rig{tool: tool, sshConfig: sshConfig, proxyAddr: proxyAddr}, cleanup, nil
+	return config, cleanup, nil
 }
 
 // waitForTarget polls the sidecar's target health until it has read the SSH
@@ -152,7 +147,7 @@ func waitForTarget(proxyAddr string) error {
 }
 
 func TestSSHRunsACommandThroughThePlugin(t *testing.T) {
-	stdout, stderr, code := harness.SSH(t, shared.sshConfig, nil, alias, "echo e2e-ok")
+	stdout, stderr, code := harness.SSH(t, sshConfig, nil, alias, "echo e2e-ok")
 	if code != 0 || stdout != "e2e-ok\n" {
 		t.Errorf("ssh exit %d, stdout %q (stderr %q)", code, stdout, stderr)
 	}
@@ -162,14 +157,14 @@ func TestSSHRunsACommandThroughThePlugin(t *testing.T) {
 }
 
 func TestSSHPassesTheExitStatusThrough(t *testing.T) {
-	_, stderr, code := harness.SSH(t, shared.sshConfig, nil, alias, "exit 7")
+	_, stderr, code := harness.SSH(t, sshConfig, nil, alias, "exit 7")
 	if code != 7 {
 		t.Errorf("ssh exit %d, want the command's 7 (stderr %q)", code, stderr)
 	}
 }
 
 func TestSSHAllocatesATerminal(t *testing.T) {
-	stdout, stderr, code := harness.SSH(t, shared.sshConfig, nil, "-tt", alias, "tty")
+	stdout, stderr, code := harness.SSH(t, sshConfig, nil, "-tt", alias, "tty")
 	if code != 0 || !strings.Contains(stdout, "/dev/pts/") {
 		t.Errorf("ssh -tt exit %d, stdout %q (stderr %q), want a pseudo-terminal", code, stdout, stderr)
 	}
@@ -180,7 +175,7 @@ func TestSSHCarriesBytesBothWays(t *testing.T) {
 	if _, err := rand.Read(payload); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, code := harness.SSH(t, shared.sshConfig, payload, alias, "cat")
+	stdout, stderr, code := harness.SSH(t, sshConfig, payload, alias, "cat")
 	if code != 0 || !bytes.Equal([]byte(stdout), payload) {
 		t.Errorf("cat through the plugin: exit %d, %d of %d bytes back (stderr %q)", code, len(stdout), len(payload), stderr)
 	}
@@ -202,7 +197,7 @@ func TestSFTPTransfersAFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := harness.SFTP(shared.sshConfig, batch, alias)
+	out, err := harness.SFTP(sshConfig, batch, alias)
 	if err != nil {
 		t.Fatalf("sftp: %v\n%s", err, out)
 	}
