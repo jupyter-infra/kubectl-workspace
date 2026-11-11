@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -90,8 +91,12 @@ func kubectlWorkspaceCommand(subcommand, kubeconfig, contextName, cluster string
 	if cluster != contextName {
 		parts = append(parts, "--cluster-name", cluster)
 	}
+	quote := sshconfig.ShellQuote
+	if runtime.GOOS == goosWindows {
+		quote = sshconfig.WindowsQuote
+	}
 	for i, part := range parts {
-		parts[i] = sshconfig.ShellQuote(part)
+		parts[i] = quote(part)
 	}
 	return strings.Join(parts, " ")
 }

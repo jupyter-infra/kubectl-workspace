@@ -116,15 +116,20 @@ func ShellQuote(s string) string {
 
 // quoteArg quotes one ProxyCommand argument. OpenSSH expands %-tokens on the whole
 // line first, so a literal % is doubled; it then runs the command through the
-// user's shell. On Windows the path's backslashes must reach OpenSSH unchanged, so
-// only whitespace is quoted there.
+// user's shell.
 func quoteArg(s string, windows bool) string {
 	s = strings.ReplaceAll(s, "%", "%%")
 	if windows {
-		if strings.ContainsAny(s, " \t") {
-			return `"` + s + `"`
-		}
-		return s
+		return WindowsQuote(s)
 	}
 	return ShellQuote(s)
+}
+
+// WindowsQuote quotes s for cmd and PowerShell: double quotes around whitespace and
+// nothing else, so a path's backslashes arrive unchanged.
+func WindowsQuote(s string) string {
+	if strings.ContainsAny(s, " \t") {
+		return `"` + s + `"`
+	}
+	return s
 }

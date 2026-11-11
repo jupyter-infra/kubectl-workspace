@@ -130,6 +130,19 @@ func TestShellQuote(t *testing.T) {
 	}
 }
 
+func TestWindowsQuote(t *testing.T) {
+	tests := map[string]string{
+		`C:\Users\me\.kube\config`:        `C:\Users\me\.kube\config`,
+		`C:\Program Files\kw\kubectl.exe`: `"C:\Program Files\kw\kubectl.exe"`,
+		"dev":                             "dev",
+	}
+	for in, want := range tests {
+		if got := WindowsQuote(in); got != want {
+			t.Errorf("WindowsQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestValidateRejectsLineBreaks(t *testing.T) {
 	entry := testEntry()
 	entry.Context = "dev\n  ProxyCommand evil"
