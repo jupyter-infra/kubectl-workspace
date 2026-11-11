@@ -93,6 +93,7 @@ Global flags, on every command:
 |------|---------|---------|
 | `--stdio` | required | Relay SSH between stdin/stdout and the workspace |
 | `--credential-timeout` | `5s` | How long the kubeconfig's credential plugin may take before `connect` fails |
+| `--ca-file` | system roots | PEM bundle of the ingress certificate authority, see Private certificate authorities |
 
 `kubectl workspace ssh-config [--write]`, the one-time setup:
 
@@ -104,6 +105,7 @@ Global flags, on every command:
 | `--command` | this binary | Path of `kubectl-workspace` for the ProxyCommand |
 | `--user` | `jovyan` | SSH user name in the entry |
 | `--credential-timeout` | `5s` | Written into the entry when it differs from the default |
+| `--ca-file` | system roots | Written into the entry as `connect`'s `--ca-file` |
 
 `kubectl workspace open <workspace>`, launches VS Code:
 
