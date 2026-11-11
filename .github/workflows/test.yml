@@ -23,11 +23,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Running Tests
-        run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum
-          make test
+      - name: Run the tests
+        run: make test
 
   build:
     name: Cross-compile
@@ -40,6 +37,11 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Check that go.mod and go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
 
       - name: Build every release target
         run: |

@@ -20,7 +20,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Run E2E tests
-        run: make test-e2e CONTAINER_TOOL=docker
+        run: make test-e2e
 
   kind:
     name: through the operator and traefik on kind
@@ -42,7 +42,7 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
 
       - name: Run the Kind E2E tests
-        run: make test-e2e-kind-full CONTAINER_TOOL=docker
+        run: make test-e2e-kind-full
 
       - name: Keep the cluster logs of a failed run
         if: failure()

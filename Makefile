@@ -4,7 +4,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-# Container tool for the end-to-end rig (finch or docker).
+# Container tool for the end-to-end rigs (docker or finch).
 CONTAINER_TOOL ?= docker
 
 ##@ General
@@ -34,7 +34,8 @@ E2E_KIND_CLUSTER ?= kubectl-workspace-e2e
 E2E_OPERATOR_CHART_VERSION ?= 0.4.1
 E2E_CERT_MANAGER_CHART_VERSION ?= v1.21.3
 E2E_TRAEFIK_CHART_VERSION ?= 42.3.2
-E2E_WORKSPACE_IMAGE ?= kubectl-workspace-e2e-workspace:local
+# The name is also in test/e2e/testdata/kind/fixtures.yaml.
+E2E_WORKSPACE_IMAGE := kubectl-workspace-e2e-workspace:local
 ifeq ($(CONTAINER_TOOL),finch)
 export KIND_EXPERIMENTAL_PROVIDER = finch
 endif
@@ -72,9 +73,8 @@ cleanup-e2e-kind: ## Delete the Kind cluster of the end-to-end rig.
 	$(KIND) delete cluster --name $(E2E_KIND_CLUSTER)
 
 .PHONY: test-e2e-kind-full
-test-e2e-kind-full: ## setup-e2e-kind, test-e2e-kind and cleanup-e2e-kind in one go; on a failure the cluster's logs land in bin/kind-logs first.
-	$(MAKE) setup-e2e-kind
-	$(MAKE) test-e2e-kind || { $(KIND) export logs bin/kind-logs --name $(E2E_KIND_CLUSTER); $(MAKE) cleanup-e2e-kind; exit 1; }
+test-e2e-kind-full: ## setup-e2e-kind, test-e2e-kind and cleanup-e2e-kind in one go; when either fails the cluster's logs land in bin/kind-logs first.
+	$(MAKE) setup-e2e-kind test-e2e-kind || { $(KIND) export logs bin/kind-logs --name $(E2E_KIND_CLUSTER); $(MAKE) cleanup-e2e-kind; exit 1; }
 	$(MAKE) cleanup-e2e-kind
 
 .PHONY: lint
