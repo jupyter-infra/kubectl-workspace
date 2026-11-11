@@ -28,7 +28,6 @@ linters:
         - (net.Conn).Close
         - (*net.TCPListener).Close
         - (*os.File).Close
-        - (fmt).Fprintf
     revive:
       rules:
         - name: comment-spacings
