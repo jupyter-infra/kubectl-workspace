@@ -16,7 +16,7 @@ in [jupyter-infra/jupyter-k8s#509](https://github.com/jupyter-infra/jupyter-k8s/
 Module path: `github.com/jupyter-infra/kubectl-workspace`
 
 No dependency on the operator module or on the proxy module: the operator's request
-and response types are mirrored in three small structs in `internal/kube`, which keeps
+and response types are mirrored in small structs in `internal/kube`, which keeps
 the operator's dependency graph out of this binary.
 
 ## Architecture
@@ -99,6 +99,8 @@ the operator's dependency graph out of this binary.
 
 - Go 1.26+
 - golangci-lint v2.12+
+- For the end-to-end suites: a container tool (docker, or finch on a Mac), `ssh` and
+  `sftp`; the Kind suite also needs `kind`, `helm` and `kubectl`
 
 ### Common Tasks
 
@@ -138,9 +140,9 @@ and Traefik serving a certificate from a certificate authority of the rig's own,
 ForwardAuth middleware hands the connection's token to the auth middleware before the
 WebSocket reaches the published sidecar. The suite writes the SSH entry with
 `ssh-config --write --ca-file` against the cluster's kubeconfig, reaches Traefik's TLS
-port through a `kubectl port-forward`, and checks a command, the exit status, an SFTP
-round trip, `open --print-only`, and the refusals without the rig's CA, for a service
-account without access and for a stopped workspace. `make setup-e2e-kind` installs the
+port through a `kubectl port-forward`, and checks a command through the ingress,
+`open --print-only`, and the refusals without the rig's CA, for a service account
+without access and for a stopped workspace. `make setup-e2e-kind` installs the
 cluster-level pieces at the versions pinned in the Makefile; the suite applies
 `test/e2e/testdata/kind/fixtures.yaml`.
 
@@ -151,8 +153,8 @@ When adding a test:
   call sequence that produces it.
 - A fake another package will also need goes in `internal/testutil`; a fake one test
   needs stays in that test.
-- Nothing in the unit tests needs a cluster, `ssh` or `kubectl`; a check that needs
-  the real `ssh` belongs in `test/e2e`, one that needs the operator in `test/e2e/kind`.
+- A check that needs the real `ssh` belongs in `test/e2e`, one that needs the operator
+  in `test/e2e/kind`.
 
 ### Before Submitting a PR
 
@@ -167,10 +169,10 @@ only on a developer Mac; the test workflow runs both. Windows is cross-compiled,
 
 Before asking for a review, run roborev on the branch: `make review` runs
 `roborev review --branch --local --wait` with whatever coding agent is installed and
-prints the findings. Install roborev from https://roborev.io. jupyter-k8s, jupyter-k8s-ui
-and jupyter-deploy also run it in CI on every pull request; this repository does not.
+prints the findings. Install roborev from https://roborev.io. This repository does not
+run it in CI.
 
-## CI & Release
+## CI
 
 See [`.github/AGENT.md`](.github/AGENT.md) for the workflows.
 

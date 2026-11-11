@@ -44,8 +44,7 @@ sftp <workspace>.<namespace>.<cluster>.jk8s
 kubectl workspace open <workspace>
 ```
 
-`open` launches VS Code on the workspace through its Remote-SSH extension; the "Open
-in VS Code" button in the web UI uses the same link.
+`open` launches VS Code on the workspace through its Remote-SSH extension.
 
 ## How it works
 
@@ -152,9 +151,9 @@ and `connect` verifies against that bundle instead.
 
 ## Cluster requirements
 
-| kubectl-workspace | jupyter-k8s operator | ws-proxy sidecar |
-|-------------------|----------------------|------------------|
-| v0.1 | v0.3.0 or later, with token signing enabled in its chart (`extensionApi.jwtSecret.enable`) | v0.1.0-rc.2 or later |
+| kubectl-workspace | jupyter-k8s operator and auth middleware | ws-proxy sidecar |
+|-------------------|------------------------------------------|------------------|
+| v0.1 | v0.3.0 or later, with token signing enabled in the chart (`extensionApi.jwtSecret.enable`) | v0.1.0-rc.2 or later |
 
 The workspace's access strategy has to carry the WebSocket route
 (`webSocketURLTemplate`) and the sidecar from
@@ -169,15 +168,8 @@ Run `ssh -v <alias>`: the plugin's messages appear in the output, prefixed
 
 ## Development
 
-- Build: `make build`
-- Tests with the race detector: `make test`
-- End to end, `ssh` and `sftp` through the plugin against the published sidecar and
-  SSH server images: `make test-e2e` (needs docker or finch, `ssh` and `sftp`)
-- End to end through a Kind cluster with the operator, the auth middleware and Traefik:
-  `make test-e2e-kind-full` (needs kind, helm and kubectl as well)
-- Lint: `make lint`
-
-[AGENT.md](AGENT.md) describes the packages, their invariants and the tests;
+`make build`, `make test` and `make lint` are the local checks. [AGENT.md](AGENT.md)
+describes the packages, their invariants, the tests and the two end-to-end rigs;
 [.github/AGENT.md](.github/AGENT.md) describes the workflows.
 
 ## License
