@@ -51,14 +51,16 @@ func fakePlugin(mode string) int {
 	case "sleep":
 		time.Sleep(time.Minute)
 		return 0
-	case "sleep-with-child":
+	case "sleep-with-child", "child-then-exit":
 		child := exec.Command(os.Args[0])
 		child.Env = append(os.Environ(), fakePluginEnv+"=sleep")
 		if err := child.Start(); err != nil {
 			return 2
 		}
 		fmt.Fprintf(os.Stderr, "child-pid:%d\n", child.Process.Pid)
-		time.Sleep(time.Minute)
+		if mode == "sleep-with-child" {
+			time.Sleep(time.Minute)
+		}
 		return 0
 	case "fail":
 		return 3
@@ -397,15 +399,7 @@ func TestResolveCredentialTerminatesThePluginsChildrenAtTheDeadline(t *testing.T
 		t.Fatalf("error = %v, want *SignInRequiredError", err)
 	}
 
-	var childPID int
-	for _, line := range strings.Split(stderr.String(), "\n") {
-		if raw, ok := strings.CutPrefix(line, "child-pid:"); ok {
-			childPID, _ = strconv.Atoi(raw)
-		}
-	}
-	if childPID == 0 {
-		t.Fatalf("the plugin did not report its child; stderr:\n%s", stderr.String())
-	}
+	childPID := childPIDFrom(t, stderr.String())
 	// On Unix a zombie still answers until init reaps it once the plugin is gone.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
@@ -434,5 +428,47 @@ func TestProcessTreeReportsAFinishedPluginAsDone(t *testing.T) {
 	}
 	if err := tree.terminate(); !errors.Is(err, os.ErrProcessDone) {
 		t.Errorf("terminate(finished plugin) = %v, want os.ErrProcessDone", err)
+	}
+}
+
+// childPIDFrom reads the pid the fake plugin reports for the child it started.
+func childPIDFrom(t *testing.T, stderr string) int {
+	t.Helper()
+	for _, line := range strings.Split(stderr, "\n") {
+		if raw, ok := strings.CutPrefix(line, "child-pid:"); ok {
+			pid, err := strconv.Atoi(raw)
+			if err == nil && pid != 0 {
+				return pid
+			}
+		}
+	}
+	t.Fatalf("the plugin did not report its child; stderr:\n%s", stderr)
+	return 0
+}
+
+// An interactive plugin keeps the terminal's process group on Unix and gets no job
+// on Windows, so a program it leaves behind, such as the browser kubelogin opens
+// for the sign-in, outlives it.
+func TestProcessTreeLeavesAnInteractivePluginsChildAlive(t *testing.T) {
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), fakePluginEnv+"=child-then-exit")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	tree := newProcessTree(cmd, false)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	tree.attach()
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	tree.close()
+
+	childPID := childPIDFrom(t, stderr.String())
+	if child, err := os.FindProcess(childPID); err == nil {
+		defer func() { _ = child.Kill() }()
+	}
+	if processGone(childPID) {
+		t.Errorf("the interactive plugin's child %d ended with the plugin", childPID)
 	}
 }

@@ -31,9 +31,14 @@ type processTree struct {
 	proc windows.Handle
 }
 
-// newProcessTree creates the job; cmd must not have started yet.
-func newProcessTree(cmd *exec.Cmd, _ bool) *processTree {
+// newProcessTree creates the job for a plugin that runs without a terminal; cmd
+// must not have started yet. An interactive plugin gets no job: the browser
+// kubelogin opens for the sign-in would otherwise end with it.
+func newProcessTree(cmd *exec.Cmd, own bool) *processTree {
 	t := &processTree{cmd: cmd}
+	if !own {
+		return t
+	}
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return t
@@ -71,8 +76,9 @@ func (t *processTree) attach() {
 	t.proc = proc
 }
 
-// terminate ends the job, and with it the plugin and its children. A plugin that
-// had already exited is reported as done, which exec treats as benign.
+// terminate ends the job, and with it the plugin and its children; a plugin the
+// job has not received yet, or that has no job, is killed on its own. A plugin
+// that had already exited is reported as done, which exec treats as benign.
 func (t *processTree) terminate() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -80,8 +86,11 @@ func (t *processTree) terminate() error {
 	var err error
 	if t.job != 0 {
 		err = windows.TerminateJobObject(t.job, 1)
-	} else {
-		err = t.cmd.Process.Kill()
+	}
+	if t.proc == 0 {
+		if kerr := t.cmd.Process.Kill(); err == nil {
+			err = kerr
+		}
 	}
 	if exited {
 		return os.ErrProcessDone
