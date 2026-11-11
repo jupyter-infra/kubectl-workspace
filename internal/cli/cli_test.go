@@ -32,7 +32,7 @@ func run(t *testing.T, args ...string) (stdout string, err error) {
 func runWithStderr(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	root := NewRootCommand(Streams{In: strings.NewReader(""), Out: &out, Err: &errOut}, "test")
+	root := newRootCommand(Streams{In: strings.NewReader(""), Out: &out, Err: &errOut}, "test")
 	root.SetArgs(args)
 	err = root.ExecuteContext(context.Background())
 	return out.String(), errOut.String(), err
@@ -60,7 +60,7 @@ func startConnect(t *testing.T, args ...string) *connectRun {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	r := &connectRun{stdin: inWriter, stdout: outReader, stderr: &bytes.Buffer{}, done: make(chan error, 1), cancel: cancel}
-	root := NewRootCommand(Streams{In: inReader, Out: outWriter, Err: r.stderr}, "test")
+	root := newRootCommand(Streams{In: inReader, Out: outWriter, Err: r.stderr}, "test")
 	root.SetArgs(args)
 	go func() {
 		err := root.ExecuteContext(ctx)

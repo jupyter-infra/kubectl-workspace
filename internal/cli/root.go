@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -26,12 +27,16 @@ import (
 // traced back to this program.
 const programName = "kubectl-workspace"
 
-// goosWindows is runtime.GOOS on Windows.
 const goosWindows = "windows"
 
-// caFileHelp describes --ca-file, shared by connect and ssh-config.
-const caFileHelp = "PEM bundle with the certificate authority of the cluster's ingress, " +
-	"trusted instead of the system roots"
+// Help texts of the flags that connect, ssh-config and open share.
+const (
+	caFileHelp = "PEM bundle with the certificate authority of the cluster's ingress, " +
+		"trusted instead of the system roots"
+	credentialTimeoutHelp = "how long connect waits for the kubeconfig's credential plugin"
+	clusterNameHelp       = "name of the cluster in the alias (default the context name)"
+	sshConfigFileHelp     = "SSH configuration file (default ~/.ssh/config)"
+)
 
 // Streams are the process's standard streams, injectable for tests.
 type Streams struct {
@@ -40,7 +45,7 @@ type Streams struct {
 	Err io.Writer
 }
 
-// rootOptions holds the flags every command shares.
+// rootOptions is the state every command shares.
 type rootOptions struct {
 	kubeconfig string
 	context    string
@@ -63,7 +68,7 @@ func Main(args []string, streams Streams, version string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 
-	root := NewRootCommand(streams, version)
+	root := newRootCommand(streams, version)
 	root.SetArgs(args)
 	if err := root.ExecuteContext(ctx); err != nil {
 		_, _ = fmt.Fprintf(streams.Err, "%s: %v\n", programName, err)
@@ -79,19 +84,17 @@ func kubectlWorkspaceCommand(subcommand, kubeconfig, contextName, cluster string
 	parts := []string{"kubectl", "workspace", subcommand}
 	parts = append(parts, args...)
 	if kubeconfig != "" {
-		parts = append(parts, "--kubeconfig", sshconfig.ShellQuote(kubeconfig))
+		parts = append(parts, "--kubeconfig", kubeconfig)
 	}
-	parts = append(parts, "--context", sshconfig.ShellQuote(contextName))
-	if cluster != "" && cluster != contextName {
+	parts = append(parts, "--context", contextName)
+	if cluster != contextName {
 		parts = append(parts, "--cluster-name", cluster)
+	}
+	for i, part := range parts {
+		parts[i] = sshconfig.ShellQuote(part)
 	}
 	return strings.Join(parts, " ")
 }
-
-const (
-	clusterNameHelp   = "name of the cluster in the alias (default the context name)"
-	sshConfigFileHelp = "SSH configuration file (default ~/.ssh/config)"
-)
 
 // sshConfigPath returns the file --ssh-config-file names, or the default.
 func sshConfigPath(flag string) (string, error) {
@@ -101,8 +104,8 @@ func sshConfigPath(flag string) (string, error) {
 	return sshconfig.DefaultPath()
 }
 
-// NewRootCommand builds the command tree.
-func NewRootCommand(streams Streams, version string) *cobra.Command {
+// newRootCommand builds the command tree.
+func newRootCommand(streams Streams, version string) *cobra.Command {
 	o := &rootOptions{streams: streams, userAgent: programName + "/" + version}
 	root := &cobra.Command{
 		Use:   "workspace",
@@ -110,7 +113,7 @@ func NewRootCommand(streams Streams, version string) *cobra.Command {
 		Long: `kubectl workspace connects this machine to jupyter-k8s workspaces over SSH,
 carried inside a WebSocket through the cluster's HTTPS ingress and authorized by
 the kubeconfig credential. Set up once per cluster with "ssh-config --write";
-afterwards "ssh <workspace>.<namespace>.<cluster>.jk8s" and VS Code's Remote-SSH
+afterwards "ssh ` + sshconfig.AliasFormat + `" and VS Code's Remote-SSH
 reach any workspace in that cluster, and "open" launches VS Code on one.`,
 		Version:       version,
 		SilenceUsage:  true,
@@ -134,4 +137,25 @@ reach any workspace in that cluster, and "open" launches VS Code on one.`,
 
 	root.AddCommand(newConnectCommand(o), newSSHConfigCommand(o), newOpenCommand(o))
 	return root
+}
+
+func clusterName(flag, contextName string) (string, error) {
+	if flag != "" {
+		return flag, sshconfig.ValidateClusterName(flag)
+	}
+	if err := sshconfig.ValidateClusterName(contextName); err != nil {
+		return "", fmt.Errorf("the context name cannot be the cluster name in the alias (%w); pass --cluster-name", err)
+	}
+	return contextName, nil
+}
+
+// defaultCredentialTimeout leaves room inside Remote-SSH's 15-second connection
+// timeout for the connection request and the WebSocket handshake.
+const defaultCredentialTimeout = 5 * time.Second
+
+func checkCredentialTimeout(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--credential-timeout must be positive, got %s", d)
+	}
+	return nil
 }

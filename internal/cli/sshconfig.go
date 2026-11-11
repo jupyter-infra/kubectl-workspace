@@ -23,13 +23,12 @@ import (
 
 type sshConfigOptions struct {
 	*rootOptions
-	write         bool
-	clusterName   string
-	sshConfigFile string
-	command       string
-	user          string
-	caFile        string
-	// credentialTimeout is written into the entry when it differs from connect's default.
+	write             bool
+	clusterName       string
+	sshConfigFile     string
+	command           string
+	user              string
+	caFile            string
 	credentialTimeout time.Duration
 }
 
@@ -58,7 +57,7 @@ DNS label; contexts named like EKS ARNs need --cluster-name.`,
 	cmd.Flags().StringVar(&o.user, "user", sshconfig.DefaultUser, "SSH user name in the entry")
 	cmd.Flags().StringVar(&o.caFile, "ca-file", "", caFileHelp+"; written into the entry")
 	cmd.Flags().DurationVar(&o.credentialTimeout, "credential-timeout", defaultCredentialTimeout,
-		"how long connect may wait for the kubeconfig's credential plugin; written into the entry when it differs")
+		credentialTimeoutHelp+"; written into the entry when it differs")
 	return cmd
 }
 
@@ -98,8 +97,8 @@ func (o *sshConfigOptions) run() error {
 		if _, err := tunnel.LoadRoots(o.caFile); err != nil {
 			return err
 		}
-		if entry.CAFile, err = filepath.Abs(o.caFile); err != nil {
-			return fmt.Errorf("failed to resolve the CA file path %q: %w", o.caFile, err)
+		if entry.CAFile, err = absPath("CA file", o.caFile); err != nil {
+			return err
 		}
 	}
 	if err := entry.Validate(); err != nil {
@@ -118,7 +117,8 @@ func (o *sshConfigOptions) run() error {
 		return err
 	}
 	_, _ = fmt.Fprintf(o.streams.Out, "Installed the entry for Host %s in %s.\n", entry.HostPattern(), path)
-	_, _ = fmt.Fprintf(o.streams.Out, "Connect with: ssh <workspace>.<namespace>.%s.%s\n", cluster, sshconfig.AliasSuffix)
+	alias := strings.Replace(sshconfig.AliasFormat, "<cluster>", cluster, 1)
+	_, _ = fmt.Fprintf(o.streams.Out, "Connect with: ssh %s\n", alias)
 	return nil
 }
 
@@ -138,27 +138,18 @@ func (o *sshConfigOptions) kubeconfigForEntry() (string, error) {
 		}
 		path = env
 	}
+	return absPath("kubeconfig", path)
+}
+
+// absPath makes a path absolute, naming what it is in the error.
+func absPath(what, path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve the kubeconfig path %q: %w", path, err)
+		return "", fmt.Errorf("failed to resolve the %s path %q: %w", what, path, err)
 	}
 	return abs, nil
 }
 
-func clusterName(flag, contextName string) (string, error) {
-	if flag != "" {
-		return flag, sshconfig.ValidateClusterName(flag)
-	}
-	if err := sshconfig.ValidateClusterName(contextName); err != nil {
-		return "", fmt.Errorf("the context name cannot be the cluster name in the alias (%w); pass --cluster-name", err)
-	}
-	return contextName, nil
-}
-
-// executablePath returns the path OpenSSH should run. When this binary is on PATH
-// under its own name, that path is preferred: krew's PATH entry is a symlink into
-// a versioned store directory, and the resolved path would break at the next
-// upgrade.
 // commandForEntry resolves --command for the ProxyCommand line: this binary when
 // empty, a path made absolute because OpenSSH runs the command from its own working
 // directory, and a bare name left to the PATH lookup at connection time.
@@ -167,26 +158,23 @@ func commandForEntry(command string) (string, error) {
 	case command == "":
 		return executablePath()
 	case strings.ContainsAny(command, `/\`):
-		abs, err := filepath.Abs(command)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve the command path %q: %w", command, err)
-		}
-		return abs, nil
+		return absPath("command", command)
 	default:
 		return command, nil
 	}
 }
 
+// executablePath returns the path OpenSSH should run. When this binary is on PATH
+// under its own name, that path is preferred: krew's PATH entry is a symlink into
+// a versioned store directory, and the resolved path would break at the next
+// upgrade.
 func executablePath() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("failed to locate this binary: %w", err)
 	}
-	onPath, err := exec.LookPath(filepath.Base(exe))
-	if err == nil && sameFile(onPath, exe) {
-		if abs, err := filepath.Abs(onPath); err == nil {
-			return abs, nil
-		}
+	if onPath, err := exec.LookPath(filepath.Base(exe)); err == nil && sameFile(onPath, exe) {
+		return onPath, nil
 	}
 	return exe, nil
 }

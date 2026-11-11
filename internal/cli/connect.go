@@ -7,7 +7,6 @@ package cli
 
 import (
 	"context"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"time"
@@ -19,13 +18,8 @@ import (
 	"github.com/jupyter-infra/kubectl-workspace/internal/tunnel"
 )
 
-// defaultCredentialTimeout leaves room inside Remote-SSH's 15-second connection
-// timeout for the connection request and the WebSocket handshake.
-const defaultCredentialTimeout = 5 * time.Second
-
 type connectOptions struct {
 	*rootOptions
-	stdio             bool
 	directURL         string
 	caFile            string
 	credentialTimeout time.Duration
@@ -50,12 +44,10 @@ credential has expired connect fails fast and names the command to run instead.`
 			return o.run(cmd.Context(), args[0])
 		},
 	}
-	// The only mode; the flag marks the ProxyCommand line in ssh_config as speaking
-	// SSH on stdio, the convention `coder ssh --stdio` and `devpod ssh --stdio` set.
-	cmd.Flags().BoolVar(&o.stdio, "stdio", false, "relay SSH between stdin/stdout and the workspace (required)")
+	// Required and the only mode, the convention set by `coder ssh --stdio` and `devpod ssh --stdio`.
+	cmd.Flags().Bool("stdio", false, "relay SSH between stdin/stdout and the workspace (required)")
 	_ = cmd.MarkFlagRequired("stdio")
-	cmd.Flags().DurationVar(&o.credentialTimeout, "credential-timeout", defaultCredentialTimeout,
-		"how long the kubeconfig's credential plugin may take before connect gives up")
+	cmd.Flags().DurationVar(&o.credentialTimeout, "credential-timeout", defaultCredentialTimeout, credentialTimeoutHelp)
 	cmd.Flags().StringVar(&o.directURL, "url", "",
 		"WebSocket URL to connect to directly instead of asking the cluster (development)")
 	_ = cmd.Flags().MarkHidden("url")
@@ -87,7 +79,7 @@ func (o *connectOptions) run(ctx context.Context, host string) error {
 
 // session requests the connection, dials the tunnel and relays until it ends.
 func (o *connectOptions) session(ctx context.Context, alias sshconfig.Alias) error {
-	roots, err := loadRoots(o.caFile)
+	roots, err := tunnel.LoadRoots(o.caFile)
 	if err != nil {
 		return err
 	}
@@ -132,9 +124,11 @@ func (o *connectOptions) connection(ctx context.Context, alias sshconfig.Alias) 
 	return conn, nil
 }
 
-// credentialError adds the way out to a credential failure a terminal can fix: a
-// plugin that waited for a browser or exited non-zero, not one that is missing. A
-// plugin that only took too long is told how to raise the deadline in the entry.
+// slowPluginFactor scales the active deadline into the one the hint suggests.
+const slowPluginFactor = 3
+
+// credentialError adds the sign-in command to failures a terminal can fix; a missing
+// plugin already carries the kubeconfig's install hint.
 func (o *connectOptions) credentialError(err error, contextName string, alias sshconfig.Alias) error {
 	var signIn *kube.SignInRequiredError
 	var exited *kube.PluginExitError
@@ -144,25 +138,10 @@ func (o *connectOptions) credentialError(err error, contextName string, alias ss
 	msg := "Sign in from a terminal first, then reconnect:\n  " + kubectlWorkspaceCommand("open",
 		o.kubeconfig, contextName, alias.Cluster, alias.Workspace, "--namespace", alias.Namespace)
 	if signIn != nil {
-		msg += "\nA plugin that is slow rather than signing in needs a longer deadline in the SSH entry: rerun " +
-			"your ssh-config --write command for this cluster with --credential-timeout added, for a default entry\n  " +
+		msg += "\nIf the plugin is slow rather than waiting for a sign-in, add --credential-timeout to your " +
+			"ssh-config --write command, for example:\n  " +
 			kubectlWorkspaceCommand("ssh-config", o.kubeconfig, contextName, alias.Cluster,
-				"--write", "--credential-timeout", (3*o.credentialTimeout).String())
+				"--write", "--credential-timeout", (slowPluginFactor*o.credentialTimeout).String())
 	}
 	return fmt.Errorf("%w\n%s", err, msg)
-}
-
-// loadRoots reads the --ca-file bundle; an empty path keeps the system roots.
-func loadRoots(path string) (*x509.CertPool, error) {
-	if path == "" {
-		return nil, nil
-	}
-	return tunnel.LoadRoots(path)
-}
-
-func checkCredentialTimeout(d time.Duration) error {
-	if d <= 0 {
-		return fmt.Errorf("--credential-timeout must be positive, got %s", d)
-	}
-	return nil
 }

@@ -113,7 +113,7 @@ func (o *openOptions) checkEntry(cluster, contextName string) error {
 	if !installed {
 		args := []string{"--write"}
 		if o.sshConfigFile != "" {
-			args = append(args, "--ssh-config-file", sshconfig.ShellQuote(o.sshConfigFile))
+			args = append(args, "--ssh-config-file", o.sshConfigFile)
 		}
 		return fmt.Errorf("%s has no entry for cluster %q; run: %s", path, cluster,
 			kubectlWorkspaceCommand("ssh-config", o.kubeconfig, contextName, cluster, args...))
