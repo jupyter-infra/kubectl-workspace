@@ -197,30 +197,38 @@ func shellWords(line string) []string {
 	return words
 }
 
-func TestSSHConfigWritesTheCAFileIntoTheEntry(t *testing.T) {
+func TestSSHConfigWritesTheCAFilePathAbsoluteIntoTheEntry(t *testing.T) {
 	echo := testutil.NewTLSEchoServer(t)
 	dir := t.TempDir()
-	caFile := filepath.Join(dir, "ca.pem")
-	if err := os.WriteFile(caFile, echo.CAPEM(), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ca.pem"), echo.CAPEM(), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "junk.pem"), []byte("not a certificate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
 	kubeconfig := staticKubeconfig(t)
+	file := filepath.Join(dir, "ssh_config")
 
-	stdout, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", "/opt/kw", "--ca-file", caFile)
+	_, err := run(t, "ssh-config", "--write", "--ssh-config-file", file, "--kubeconfig", kubeconfig,
+		"--command", "/opt/kw", "--ca-file", "junk.pem")
+	if err == nil || !strings.Contains(err.Error(), "no certificates") {
+		t.Errorf("error = %v, want the empty bundle refused", err)
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Errorf("the entry was written although the CA file was refused (stat: %v)", err)
+	}
+
+	if _, err := run(t, "ssh-config", "--write", "--ssh-config-file", file, "--kubeconfig", kubeconfig,
+		"--command", "/opt/kw", "--ca-file", "ca.pem"); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "--ca-file "+caFile+" %h") {
-		t.Errorf("entry =\n%s\nwant the CA file in the ProxyCommand", stdout)
-	}
-
-	junk := filepath.Join(dir, "junk.pem")
-	if err := os.WriteFile(junk, []byte("not a certificate\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err = run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", "/opt/kw", "--ca-file", junk)
-	if err == nil || !strings.Contains(err.Error(), "no certificates") {
-		t.Errorf("error = %v, want the empty bundle refused before the entry is written", err)
+	if want := "--ca-file " + filepath.Join(dir, "ca.pem") + " %h"; !strings.Contains(string(written), want) {
+		t.Errorf("entry =\n%s\nwant the relative CA file path made absolute: %s", written, want)
 	}
 }
 
