@@ -109,12 +109,12 @@ func startRig() (*rig, error) {
 	}
 	var forwardOutput bytes.Buffer
 	r.forward = exec.Command("kubectl", "--kubeconfig", r.kubeconfig, "-n", traefikNS, "port-forward", "svc/traefik", port+":443")
+	dieWithParent(r.forward)
 	r.forward.Stdout, r.forward.Stderr = &forwardOutput, &forwardOutput
 	if err := r.forward.Start(); err != nil {
 		return r, fmt.Errorf("starting the port-forward to Traefik: %v", err)
 	}
 	if err := harness.Poll(60*time.Second, 500*time.Millisecond, func() (bool, string) {
-		// Only whether Traefik answers; the certificate is checked by the plugin later.
 		conn, err := tls.Dial("tcp", "127.0.0.1:"+port, &tls.Config{InsecureSkipVerify: true})
 		if err != nil {
 			return false, err.Error()
@@ -169,7 +169,6 @@ func startRig() (*rig, error) {
 		return r, fmt.Errorf("the workspace did not become Available: %v\n%s\npods:\n%s\nworkspace:\n%s", err, out, pods, status)
 	}
 
-	// The entry is written by the plugin itself, into a file of the rig's own.
 	r.sshConfig = filepath.Join(dir, "ssh_config")
 	r.knownHosts = filepath.Join(dir, "known_hosts")
 	if out, err := harness.Command(r.plugin, "ssh-config", "--write", "--ssh-config-file", r.sshConfig,
@@ -180,12 +179,18 @@ func startRig() (*rig, error) {
 	return r, nil
 }
 
+// cleanup removes the fixtures and the rig's files; with E2E_KIND_KEEP set both stay,
+// so the rig can be driven by hand with the kubeconfig and ssh_config it prints.
 func (r *rig) cleanup() {
 	if r.forward != nil && r.forward.Process != nil {
 		_ = r.forward.Process.Kill()
 		_ = r.forward.Wait()
 	}
-	if r.manifest != "" && os.Getenv("E2E_KIND_KEEP") == "" {
+	if os.Getenv("E2E_KIND_KEEP") != "" {
+		fmt.Fprintf(os.Stderr, "kind rig kept: fixtures in the cluster, files in %s\n", r.dir)
+		return
+	}
+	if r.manifest != "" {
 		_, _ = r.kubectlStdin(r.manifest, "delete", "--ignore-not-found", "--wait=false", "-f", "-")
 	}
 	if r.dir != "" {
