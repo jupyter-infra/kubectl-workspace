@@ -162,8 +162,9 @@ When adding a test:
 - `make lint`
 - `make test`
 
-Anything touching signals or platform-specific syscalls is also checked on Linux, not
-only on a developer Mac; the test workflow runs both. Windows is cross-compiled, not run.
+Anything touching signals, process termination or paths is also checked on Linux and
+Windows, not only on a developer Mac: the test workflow runs the unit tests on all
+three, with the Unix-only cases skipped on Windows. The end-to-end rigs run on Linux.
 
 ## Automated code review
 

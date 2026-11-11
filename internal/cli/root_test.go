@@ -9,9 +9,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jupyter-infra/kubectl-workspace/internal/testutil"
 )
 
 func TestHelpNamesThePluginAsKubectlWorkspace(t *testing.T) {
@@ -40,9 +41,6 @@ func TestMainReturnsTheExitCode(t *testing.T) {
 }
 
 func TestExecutablePathPrefersThePathEntry(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlinks need privileges on Windows")
-	}
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -50,9 +48,7 @@ func TestExecutablePathPrefersThePathEntry(t *testing.T) {
 	// krew exposes the plugin through a symlink in a directory on PATH.
 	dir := t.TempDir()
 	link := filepath.Join(dir, filepath.Base(exe))
-	if err := os.Symlink(exe, link); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, exe, link)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	got, err := executablePath()

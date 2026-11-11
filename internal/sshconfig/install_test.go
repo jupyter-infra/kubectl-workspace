@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jupyter-infra/kubectl-workspace/internal/testutil"
 )
 
 func TestInstallCreatesThePrivateFile(t *testing.T) {
@@ -30,14 +32,9 @@ func TestInstallCreatesThePrivateFile(t *testing.T) {
 }
 
 func TestInstallWritesThroughASymlinkedFile(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlinks need privileges on Windows")
-	}
 	target := writeFile(t, "Host github.com\n  User git\n")
 	link := filepath.Join(t.TempDir(), "config")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, target, link)
 
 	if err := Install(link, testEntry()); err != nil {
 		t.Fatal(err)
@@ -119,9 +116,7 @@ func TestInstallPlacesTheEntry(t *testing.T) {
 func TestInstallRefusesALinkToAMissingFile(t *testing.T) {
 	dir := t.TempDir()
 	link := filepath.Join(dir, "config")
-	if err := os.Symlink(filepath.Join(dir, "dotfiles", "ssh_config"), link); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Symlink(t, filepath.Join(dir, "dotfiles", "ssh_config"), link)
 
 	err := Install(link, testEntry())
 	if err == nil || !strings.Contains(err.Error(), "link to a missing file") {
