@@ -54,8 +54,9 @@ the operator's dependency graph out of this binary.
 - The credential plugin never sees the tunnel. client-go would run the kubeconfig's
   exec plugin on the first request, with no deadline and with the process's stdin,
   which under `ssh` is the SSH stream. `kube.ResolveCredential` runs it itself: no
-  stdin, `interactive: false` in `KUBERNETES_EXEC_INFO`, its own process group,
-  SIGTERM at the deadline. A plugin that produces nothing before the deadline is a
+  stdin, `interactive: false` in `KUBERNETES_EXEC_INFO`, and a process tree that
+  ends as one: its own process group with SIGTERM at the deadline on Unix, a job
+  object on Windows. A plugin that produces nothing before the deadline is a
   `SignInRequiredError`, one that exits non-zero a `PluginExitError`; both get the
   `kubectl workspace open` hint, a missing plugin gets the kubeconfig's install hint
   instead.

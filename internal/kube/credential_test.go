@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +52,8 @@ func fakePlugin(mode string) int {
 		time.Sleep(time.Minute)
 		return 0
 	case "sleep-with-child":
-		child := exec.Command("sleep", "60")
+		child := exec.Command(os.Args[0])
+		child.Env = append(os.Environ(), fakePluginEnv+"=sleep")
 		if err := child.Start(); err != nil {
 			return 2
 		}
@@ -382,5 +384,55 @@ func TestResolveCredentialWithoutAPluginIsANoOp(t *testing.T) {
 	}
 	if target.Config.BearerToken != "static" {
 		t.Errorf("BearerToken = %q, want static", target.Config.BearerToken)
+	}
+}
+
+func TestResolveCredentialTerminatesThePluginsChildrenAtTheDeadline(t *testing.T) {
+	target := fakeTarget("sleep-with-child", false)
+	var stderr bytes.Buffer
+
+	err := ResolveCredential(context.Background(), target, CredentialOptions{Stderr: &stderr, Timeout: time.Second})
+	var signIn *SignInRequiredError
+	if !errors.As(err, &signIn) {
+		t.Fatalf("error = %v, want *SignInRequiredError", err)
+	}
+
+	var childPID int
+	for _, line := range strings.Split(stderr.String(), "\n") {
+		if raw, ok := strings.CutPrefix(line, "child-pid:"); ok {
+			childPID, _ = strconv.Atoi(raw)
+		}
+	}
+	if childPID == 0 {
+		t.Fatalf("the plugin did not report its child; stderr:\n%s", stderr.String())
+	}
+	// On Unix a zombie still answers until init reaps it once the plugin is gone.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if processGone(childPID) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if child, err := os.FindProcess(childPID); err == nil {
+		_ = child.Kill()
+	}
+	t.Errorf("the plugin's child %d survived the deadline", childPID)
+}
+
+func TestProcessTreeReportsAFinishedPluginAsDone(t *testing.T) {
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), fakePluginEnv+"=token")
+	tree := newProcessTree(cmd, true)
+	defer tree.close()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	tree.attach()
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tree.terminate(); !errors.Is(err, os.ErrProcessDone) {
+		t.Errorf("terminate(finished plugin) = %v, want os.ErrProcessDone", err)
 	}
 }

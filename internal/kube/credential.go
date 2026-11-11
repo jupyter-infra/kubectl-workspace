@@ -101,15 +101,19 @@ func ResolveCredential(ctx context.Context, target *Target, opts CredentialOptio
 	cmd.Stderr = opts.Stderr
 	if interactive {
 		cmd.Stdin = opts.Stdin
-	} else {
-		setProcessGroup(cmd)
 	}
-	cmd.Cancel = func() error { return terminate(cmd.Process, !interactive) }
+	tree := newProcessTree(cmd, !interactive)
+	defer tree.close()
+	cmd.Cancel = tree.terminate
 	cmd.WaitDelay = killDelay
 
+	if err := cmd.Start(); err != nil {
+		return runError(provider, err)
+	}
+	tree.attach()
 	// The deadline is read only for a failed run: a plugin that exited successfully
 	// produced its credential, even when the deadline passed between its exit and this check.
-	if runErr := cmd.Run(); runErr != nil {
+	if runErr := cmd.Wait(); runErr != nil {
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
 			return &SignInRequiredError{Context: target.Context, Command: provider.Command, Timeout: opts.Timeout}
