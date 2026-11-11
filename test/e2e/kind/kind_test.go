@@ -150,7 +150,7 @@ func startRig() (*rig, error) {
 	var denied error
 	err = harness.Poll(2*time.Minute, 5*time.Second, func() (bool, string) {
 		out, err := r.kubectlStdin(r.manifest, "apply", "-f", "-")
-		if err != nil && strings.Contains(out, "denied the request") {
+		if err != nil && strings.Contains(out, "denied the request") && !strings.Contains(out, "not found") {
 			denied = fmt.Errorf("%s", strings.TrimSpace(out))
 			return true, ""
 		}
