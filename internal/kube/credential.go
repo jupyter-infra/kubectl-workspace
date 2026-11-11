@@ -19,7 +19,6 @@ import (
 
 	"golang.org/x/term"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	clientauthv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 	"k8s.io/client-go/rest"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -32,9 +31,8 @@ const execInfoEnv = "KUBERNETES_EXEC_INFO"
 // killDelay is how long a plugin gets to exit after SIGTERM before SIGKILL.
 const killDelay = 2 * time.Second
 
-// SignInRequiredError reports that the exec credential plugin produced nothing
-// before the deadline, which is how a plugin waiting for a browser sign-in looks
-// from the outside.
+// SignInRequiredError reports an exec credential plugin that produced nothing
+// before the deadline.
 type SignInRequiredError struct {
 	Context string
 	Command string
@@ -72,8 +70,7 @@ type CredentialOptions struct {
 // and replaces it in the target's configuration with the token or client
 // certificate it returned. client-go would run the plugin on the first request
 // with no deadline and with the process's stdin, which for a ProxyCommand is the
-// SSH byte stream. Here a non-interactive plugin gets no stdin, sees
-// interactive=false in KUBERNETES_EXEC_INFO, and is killed at the deadline.
+// SSH byte stream.
 func ResolveCredential(ctx context.Context, target *Target, opts CredentialOptions) error {
 	provider := target.Config.ExecProvider
 	if provider == nil {
@@ -105,8 +102,6 @@ func ResolveCredential(ctx context.Context, target *Target, opts CredentialOptio
 	if interactive {
 		cmd.Stdin = opts.Stdin
 	} else {
-		// A wrapper that does not exec the real plugin leaves it running past the
-		// deadline unless the whole process group is signalled.
 		setProcessGroup(cmd)
 	}
 	cmd.Cancel = func() error { return terminate(cmd.Process, !interactive) }
@@ -181,10 +176,14 @@ func execInfo(target *Target, provider *clientcmdapi.ExecConfig, interactive boo
 		TypeMeta: metav1.TypeMeta{APIVersion: provider.APIVersion, Kind: "ExecCredential"},
 		Spec:     clientauthv1.ExecCredentialSpec{Interactive: interactive},
 	}
-	if provider.ProvideClusterInfo && target.cluster != nil {
-		cluster, err := clusterInfo(target.cluster, provider)
+	if provider.ProvideClusterInfo {
+		internal, err := rest.ConfigToExecCluster(target.Config)
 		if err != nil {
 			return "", err
+		}
+		cluster := &clientauthv1.Cluster{}
+		if err := clientauthv1.Convert_clientauthentication_Cluster_To_v1_Cluster(internal, cluster, nil); err != nil {
+			return "", fmt.Errorf("failed to encode the cluster for %s: %w", execInfoEnv, err)
 		}
 		cred.Spec.Cluster = cluster
 	}
@@ -193,46 +192,6 @@ func execInfo(target *Target, provider *clientcmdapi.ExecConfig, interactive boo
 		return "", fmt.Errorf("failed to encode %s: %w", execInfoEnv, err)
 	}
 	return string(data), nil
-}
-
-func clusterInfo(c *clientcmdapi.Cluster, provider *clientcmdapi.ExecConfig) (*clientauthv1.Cluster, error) {
-	caData := c.CertificateAuthorityData
-	if len(caData) == 0 && c.CertificateAuthority != "" {
-		data, err := os.ReadFile(c.CertificateAuthority)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read the certificate authority file: %w", err)
-		}
-		caData = data
-	}
-	extension, err := rawExtension(provider.Config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode the exec plugin's config: %w", err)
-	}
-	return &clientauthv1.Cluster{
-		Server:                   c.Server,
-		TLSServerName:            c.TLSServerName,
-		InsecureSkipTLSVerify:    c.InsecureSkipTLSVerify,
-		CertificateAuthorityData: caData,
-		ProxyURL:                 c.ProxyURL,
-		DisableCompression:       c.DisableCompression,
-		Config:                   extension,
-	}, nil
-}
-
-// rawExtension serializes the exec plugin's free-form config the way client-go's
-// codec does when it converts the kubeconfig to the plugin's API version.
-func rawExtension(obj runtime.Object) (runtime.RawExtension, error) {
-	if obj == nil {
-		return runtime.RawExtension{}, nil
-	}
-	if unknown, ok := obj.(*runtime.Unknown); ok {
-		return runtime.RawExtension{Raw: unknown.Raw}, nil
-	}
-	data, err := json.Marshal(obj)
-	if err != nil {
-		return runtime.RawExtension{}, err
-	}
-	return runtime.RawExtension{Raw: data}, nil
 }
 
 // parseCredential decodes the plugin's output with the checks client-go applies.

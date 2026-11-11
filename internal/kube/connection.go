@@ -58,8 +58,7 @@ type connectionResponse struct {
 }
 
 type connectionStatus struct {
-	WorkspaceConnectionType string `json:"workspaceConnectionType"`
-	WorkspaceConnectionURL  string `json:"workspaceConnectionUrl"`
+	WorkspaceConnectionURL string `json:"workspaceConnectionUrl"`
 }
 
 // apiStatus is the Kubernetes Status object an error response carries.

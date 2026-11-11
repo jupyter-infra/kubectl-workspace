@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/runtime"
-
 	"github.com/jupyter-infra/kubectl-workspace/internal/testutil"
 )
 
@@ -33,9 +31,6 @@ func TestLoadUsesTheCurrentContext(t *testing.T) {
 	}
 	if target.Config.UserAgent != "kubectl-workspace/test" || target.Config.Timeout != requestTimeout {
 		t.Errorf("user agent/timeout = %s/%s", target.Config.UserAgent, target.Config.Timeout)
-	}
-	if target.cluster == nil || target.cluster.Server != testServer {
-		t.Errorf("cluster entry = %+v", target.cluster)
 	}
 }
 
@@ -88,19 +83,5 @@ func TestLoadReportsAMissingFile(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "missing"), "", "")
 	if err == nil || !strings.Contains(err.Error(), "failed to read the kubeconfig") {
 		t.Errorf("error = %v", err)
-	}
-}
-
-func TestRawExtensionKeepsTheKubeconfigBytes(t *testing.T) {
-	got, err := rawExtension(&runtime.Unknown{Raw: []byte(`{"region":"us-west-2"}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got.Raw) != `{"region":"us-west-2"}` {
-		t.Errorf("Raw = %s", got.Raw)
-	}
-	empty, err := rawExtension(nil)
-	if err != nil || empty.Raw != nil {
-		t.Errorf("rawExtension(nil) = %+v, %v", empty, err)
 	}
 }

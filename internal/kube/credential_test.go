@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/runtime"
 	clientauthv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 	"k8s.io/client-go/rest"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -83,17 +84,18 @@ func fakeTarget(mode string, provideClusterInfo bool) *Target {
 	return &Target{
 		Context: "test",
 		Config: &rest.Config{
-			Host: "https://example.invalid:6443",
+			Host:            "https://example.invalid:6443",
+			TLSClientConfig: rest.TLSClientConfig{CAData: []byte("CA")},
 			ExecProvider: &clientcmdapi.ExecConfig{
 				Command:            os.Args[0],
 				APIVersion:         testAPIVersion,
 				Env:                []clientcmdapi.ExecEnvVar{{Name: fakePluginEnv, Value: mode}},
 				ProvideClusterInfo: provideClusterInfo,
+				Config:             &runtime.Unknown{Raw: []byte(`{"region":"us-west-2"}`)},
 				InstallHint:        "install it from example.invalid",
 				InteractiveMode:    clientcmdapi.IfAvailableExecInteractiveMode,
 			},
 		},
-		cluster: &clientcmdapi.Cluster{Server: "https://example.invalid:6443", CertificateAuthorityData: []byte("CA")},
 	}
 }
 
@@ -140,35 +142,38 @@ func TestResolveCredentialReplacesThePluginWithItsToken(t *testing.T) {
 }
 
 func TestResolveCredentialPassesClusterInfoWhenAsked(t *testing.T) {
-	target := fakeTarget("token", true)
-	var stderr bytes.Buffer
-	if err := ResolveCredential(context.Background(), target, CredentialOptions{Stderr: &stderr}); err != nil {
-		t.Fatal(err)
-	}
-	info := execInfoSeen(t, stderr.String())
-	if info.Spec.Cluster == nil || info.Spec.Cluster.Server != "https://example.invalid:6443" {
-		t.Fatalf("exec info cluster = %+v, want the kubeconfig cluster", info.Spec.Cluster)
-	}
-	if string(info.Spec.Cluster.CertificateAuthorityData) != "CA" {
-		t.Errorf("certificate authority data = %q", info.Spec.Cluster.CertificateAuthorityData)
-	}
-}
-
-func TestResolveCredentialReadsTheCertificateAuthorityFile(t *testing.T) {
-	target := fakeTarget("token", true)
 	caFile := filepath.Join(t.TempDir(), "ca.crt")
 	if err := os.WriteFile(caFile, []byte("CA FROM FILE"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	target.cluster = &clientcmdapi.Cluster{Server: "https://example.invalid:6443", CertificateAuthority: caFile}
-	var stderr bytes.Buffer
-
-	if err := ResolveCredential(context.Background(), target, CredentialOptions{Stderr: &stderr}); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name   string
+		tls    rest.TLSClientConfig
+		wantCA string
+	}{
+		{name: "embedded CA data", tls: rest.TLSClientConfig{CAData: []byte("CA")}, wantCA: "CA"},
+		{name: "CA file", tls: rest.TLSClientConfig{CAFile: caFile}, wantCA: "CA FROM FILE"},
 	}
-	info := execInfoSeen(t, stderr.String())
-	if info.Spec.Cluster == nil || string(info.Spec.Cluster.CertificateAuthorityData) != "CA FROM FILE" {
-		t.Errorf("exec info cluster = %+v, want the CA read from the file", info.Spec.Cluster)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := fakeTarget("token", true)
+			target.Config.TLSClientConfig = tt.tls
+			var stderr bytes.Buffer
+			if err := ResolveCredential(context.Background(), target, CredentialOptions{Stderr: &stderr}); err != nil {
+				t.Fatal(err)
+			}
+			cluster := execInfoSeen(t, stderr.String()).Spec.Cluster
+			if cluster == nil {
+				t.Fatal("exec info carried no cluster")
+			}
+			if cluster.Server != "https://example.invalid:6443" || string(cluster.CertificateAuthorityData) != tt.wantCA {
+				t.Errorf("exec info cluster = %s with CA %q, want the kubeconfig cluster with %q",
+					cluster.Server, cluster.CertificateAuthorityData, tt.wantCA)
+			}
+			if string(cluster.Config.Raw) != `{"region":"us-west-2"}` {
+				t.Errorf("exec info cluster config = %s, want the kubeconfig's exec config block", cluster.Config.Raw)
+			}
+		})
 	}
 }
 

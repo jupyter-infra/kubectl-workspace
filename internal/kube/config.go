@@ -14,7 +14,6 @@ import (
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 // requestTimeout bounds one request to the API server. Remote-SSH gives the whole
@@ -30,8 +29,6 @@ type Target struct {
 	// Config reaches the cluster. Until ResolveCredential runs it may still name
 	// an exec credential plugin.
 	Config *rest.Config
-	// cluster is what an exec plugin with provideClusterInfo receives.
-	cluster *clientcmdapi.Cluster
 }
 
 // Load reads the kubeconfig and selects contextName, or the current context when
@@ -55,8 +52,7 @@ func Load(kubeconfigPath, contextName, userAgent string) (*Target, error) {
 	if name == "" {
 		return nil, errors.New("no kubeconfig context selected; pass --context or set a current context")
 	}
-	ctxEntry, ok := raw.Contexts[name]
-	if !ok {
+	if _, ok := raw.Contexts[name]; !ok {
 		return nil, fmt.Errorf("context %q not found in the kubeconfig", name)
 	}
 	namespace, _, err := loader.Namespace()
@@ -70,10 +66,5 @@ func Load(kubeconfigPath, contextName, userAgent string) (*Target, error) {
 	config.Timeout = requestTimeout
 	config.UserAgent = userAgent
 
-	return &Target{
-		Context:   name,
-		Namespace: namespace,
-		Config:    config,
-		cluster:   raw.Clusters[ctxEntry.Cluster],
-	}, nil
+	return &Target{Context: name, Namespace: namespace, Config: config}, nil
 }
