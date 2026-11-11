@@ -204,13 +204,10 @@ func findEntry(lines []string, cluster string) (start, end int, err error) {
 // accepts `Keyword value` and `Keyword=value`, in any letter case.
 var blockKeyword = regexp.MustCompile(`(?i)^\s*(host|match)(\s|=)`)
 
-// firstBlock returns where a new entry goes: the index of the first Host or Match
-// line, taking the comment lines directly above it along, or -1 when there is none.
-// Before the first block, the entry's options win over a later `Host *`; after
-// everything above it, because a Host block runs to the next Host or Match keyword,
-// so an entry placed above a top-level Include would capture the included options
-// for its own hosts. Another cluster's entry counts from its start marker, so a new
-// entry lands before the marker and not between it and the Host line it encloses.
+// firstBlock returns the index where a new entry goes: the first Host or Match line
+// with the comment lines directly above it, or -1 when the file has no block. The
+// placement rule is in AGENT.md under Invariants; another cluster's entry counts
+// from its start marker, so a new entry lands before it, not inside its markers.
 func firstBlock(lines []string) int {
 	for i, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), startMarkerPrefix) {
