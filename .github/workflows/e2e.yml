@@ -23,7 +23,7 @@ jobs:
         run: make test-e2e
 
   kind:
-    name: through the operator and traefik on kind
+    name: ssh through the operator and traefik on kind
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
