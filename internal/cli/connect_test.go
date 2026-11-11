@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -126,11 +125,8 @@ func TestConnectRejectsAHostThatIsNotAnAlias(t *testing.T) {
 }
 
 func TestConnectFailsFastWhenTheCredentialNeedsASignIn(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in plugin is a Unix sleep")
-	}
-	// A sleep stands in for a plugin waiting for the browser.
-	kubeconfig := pluginKubeconfig(t, "sleep", "30")
+	// A plugin that never answers stands in for one waiting for the browser.
+	kubeconfig := pluginKubeconfig(t, "sleep")
 	tests := []struct {
 		name     string
 		context  string
@@ -170,10 +166,7 @@ func TestConnectFailsFastWhenTheCredentialNeedsASignIn(t *testing.T) {
 }
 
 func TestConnectAttachesTheSignInHintToAFailingPlugin(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-in plugin is a Unix shell")
-	}
-	kubeconfig := pluginKubeconfig(t, "sh", "-c", "exit 3")
+	kubeconfig := pluginKubeconfig(t, "fail")
 
 	_, err := run(t, "connect", "--stdio", "--kubeconfig", kubeconfig, alias)
 	if err == nil {
@@ -189,11 +182,13 @@ func TestConnectAttachesTheSignInHintToAFailingPlugin(t *testing.T) {
 	}
 }
 
-// pluginKubeconfig writes a kubeconfig whose credential comes from running command.
-func pluginKubeconfig(t *testing.T, command string, args ...string) string {
+// pluginKubeconfig writes a kubeconfig whose credential plugin is this test binary
+// in the given pluginModeEnv mode.
+func pluginKubeconfig(t *testing.T, mode string) string {
 	t.Helper()
 	return testutil.Kubeconfig{
-		Server: "https://127.0.0.1:1", Namespace: "team-a", Exec: &testutil.ExecPlugin{Command: command, Args: args},
+		Server: "https://127.0.0.1:1", Namespace: "team-a",
+		Exec: &testutil.ExecPlugin{Command: os.Args[0], Env: map[string]string{pluginModeEnv: mode}},
 	}.Write(t)
 }
 
@@ -202,7 +197,6 @@ func pluginKubeconfig(t *testing.T, command string, args ...string) string {
 func TestConnectEndsQuietlyWhenSignalled(t *testing.T) {
 	tests := []struct {
 		name  string
-		unix  bool
 		start func(t *testing.T) *connectRun
 	}{
 		{name: "during the session", start: func(t *testing.T) *connectRun {
@@ -211,8 +205,8 @@ func TestConnectEndsQuietlyWhenSignalled(t *testing.T) {
 			r.echo(t, "ping")
 			return r
 		}},
-		{name: "during the sign-in", unix: true, start: func(t *testing.T) *connectRun {
-			kubeconfig := pluginKubeconfig(t, "sleep", "30")
+		{name: "during the sign-in", start: func(t *testing.T) *connectRun {
+			kubeconfig := pluginKubeconfig(t, "sleep")
 			r := startConnect(t, "connect", "--stdio", "--kubeconfig", kubeconfig, "--credential-timeout", "20s", alias)
 			time.Sleep(300 * time.Millisecond)
 			return r
@@ -225,9 +219,6 @@ func TestConnectEndsQuietlyWhenSignalled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.unix && runtime.GOOS == "windows" {
-				t.Skip("the stand-in plugin is a Unix sleep")
-			}
 			r := tt.start(t)
 			r.cancel()
 			if err := r.wait(t); err != nil {

@@ -23,9 +23,20 @@ import (
 // so a test can start the plugin as the subprocess OpenSSH would.
 const runMainEnv = "KUBECTL_WORKSPACE_TEST_RUN_MAIN"
 
+// pluginModeEnv makes the test binary act as the kubeconfig's credential plugin:
+// "sleep" never answers, like a plugin waiting for a browser; "fail" exits 3.
+const pluginModeEnv = "KUBECTL_WORKSPACE_TEST_PLUGIN"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(runMainEnv) == "1" {
 		os.Exit(Main(os.Args[1:], Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}, "test"))
+	}
+	switch os.Getenv(pluginModeEnv) {
+	case "sleep":
+		time.Sleep(time.Minute)
+		os.Exit(0)
+	case "fail":
+		os.Exit(3)
 	}
 	os.Exit(m.Run())
 }

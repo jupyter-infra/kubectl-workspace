@@ -27,6 +27,7 @@ const (
 type ExecPlugin struct {
 	Command     string
 	Args        []string
+	Env         map[string]string
 	InstallHint string
 }
 
@@ -71,6 +72,9 @@ func (k Kubeconfig) Write(t *testing.T) string {
 			APIVersion:      "client.authentication.k8s.io/v1",
 			InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
 			InstallHint:     k.Exec.InstallHint,
+		}
+		for name, value := range k.Exec.Env {
+			auth.Exec.Env = append(auth.Exec.Env, clientcmdapi.ExecEnvVar{Name: name, Value: value})
 		}
 	} else {
 		auth.Token = Token

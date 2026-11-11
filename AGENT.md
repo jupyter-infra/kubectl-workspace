@@ -125,7 +125,8 @@ the exec credential plugin (`KUBE_TEST_FAKE_PLUGIN`), so the deadline, the proce
 group and the `KUBERNETES_EXEC_INFO` contract run against a real subprocess.
 `internal/cli/integration_test.go` runs the plugin itself as a subprocess in the
 ProxyCommand position, against the echo server, and checks the exit code and the
-silence on stderr when the client closes and on SIGHUP.
+silence on stderr when the client closes and on SIGHUP; the same test binary stands
+in for a credential plugin that never answers or fails (`KUBECTL_WORKSPACE_TEST_PLUGIN`).
 
 `test/e2e` runs the real artifacts: the published sidecar image and the SSH server
 from the published carrier image, in two containers sharing one network namespace
