@@ -149,7 +149,10 @@ certificate comes from a private certificate authority, pass its PEM bundle to
 `kubectl workspace ssh-config --write --ca-file <bundle>`; the entry carries the path
 and `connect` verifies against that bundle instead.
 
-## Cluster requirements
+## Requirements
+
+On your machine: OpenSSH 7.6 or later; the entry's `StrictHostKeyChecking accept-new`
+arrived in that release. In the cluster:
 
 | kubectl-workspace | jupyter-k8s operator and auth middleware | ws-proxy sidecar |
 |-------------------|------------------------------------------|------------------|
