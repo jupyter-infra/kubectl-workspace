@@ -59,7 +59,8 @@ var readTimeout = 90 * time.Second
 // tests can route through a proxy of their own.
 var proxyFromEnvironment = http.ProxyFromEnvironment
 
-// DialOptions is what the dial puts on the wire besides the URL.
+// DialOptions is what the dial sends besides the URL, and what it verifies the
+// server against.
 type DialOptions struct {
 	// Token travels in the Authorization header.
 	Token     string

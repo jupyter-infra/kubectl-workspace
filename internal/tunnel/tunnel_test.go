@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -381,13 +382,19 @@ func TestCloseReasonIgnoresOtherErrors(t *testing.T) {
 	}
 }
 
-func TestDialTrustsTheGivenRoots(t *testing.T) {
+func TestDialTrustsTheGivenRootsOnly(t *testing.T) {
 	echo := testutil.NewTLSEchoServer(t)
 	ws, err := Dial(context.Background(), echo.URL(testPath), DialOptions{RootCAs: echo.CertPool()})
 	if err != nil {
 		t.Fatalf("Dial with the server's own root: %v", err)
 	}
 	_ = ws.Close()
+
+	_, err = Dial(context.Background(), echo.URL(testPath), DialOptions{RootCAs: x509.NewCertPool()})
+	var verification *tls.CertificateVerificationError
+	if !errors.As(err, &verification) {
+		t.Errorf("Dial with a pool lacking the server's root = %v, want a verification failure", err)
+	}
 }
 
 func TestLoadRoots(t *testing.T) {
