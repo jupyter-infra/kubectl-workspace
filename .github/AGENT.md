@@ -11,12 +11,10 @@
 ## Testing workflow changes
 
 All three run on every pull request, so a change to them is tested by the PR that
-carries it. The end-to-end rig pulls `ghcr.io/jupyter-infra/workspace-websocket-proxy`
-and `ghcr.io/jupyter-infra/remote-access-server` at the tag pinned in
-`test/e2e/plugin_test.go` and `test/e2e/testdata/workspace.Dockerfile`; bump both
-together. The Kind job pins the cert-manager and Traefik chart versions in the Makefile and
-lists the operator versions it runs on in its matrix; the auth middleware image in
+carries it. The Makefile pins what the end-to-end rigs run against: the sidecar image
+and the SSH server image (`E2E_SIDECAR_IMAGE`, `E2E_SSH_SERVER_IMAGE`, bumped
+together) and the cert-manager and Traefik chart versions. The Kind job lists the
+operator versions it runs on in its matrix; the auth middleware image in
 `test/e2e/testdata/kind/authmiddleware.yaml` takes the operator version when the
-Makefile applies it. It also pins the sidecar image in
-`test/e2e/testdata/kind/fixtures.yaml` and the kind binary in `e2e.yml`. `lint.yml` pins
-the golangci-lint version; `.golangci.yml` is in its v2 format.
+Makefile applies it. `e2e.yml` pins the kind binary. `lint.yml` pins the golangci-lint
+version; `.golangci.yml` is in its v2 format.

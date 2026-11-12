@@ -24,10 +24,23 @@ test: ## Run the tests with the race detector.
 	go test -race ./...
 
 .PHONY: test-e2e
-test-e2e: ## Run ssh and sftp through the plugin against the published sidecar and SSH server images (needs $(CONTAINER_TOOL), ssh and sftp).
+test-e2e: e2e-workspace-image ## Run ssh and sftp through the plugin against the published sidecar and SSH server images (needs $(CONTAINER_TOOL), ssh and sftp).
 	CONTAINER_TOOL=$(CONTAINER_TOOL) go test -tags e2e -count=1 -timeout 15m -v ./test/e2e/
 
 ##@ Kind end-to-end rig: the operator with token signing on, the auth middleware and Traefik
+
+# The images both rigs run against: the sidecar as published, and the SSH server
+# copied out of its published image into the stand-in workspace image. The suites
+# read the two they start from the environment.
+E2E_SIDECAR_IMAGE ?= ghcr.io/jupyter-infra/workspace-websocket-proxy:v0.1.0-rc.2
+E2E_SSH_SERVER_IMAGE ?= ghcr.io/jupyter-infra/remote-access-server:v0.1.0-rc.2
+E2E_WORKSPACE_IMAGE ?= kubectl-workspace-e2e-workspace:local
+export E2E_SIDECAR_IMAGE E2E_WORKSPACE_IMAGE
+
+.PHONY: e2e-workspace-image
+e2e-workspace-image: ## Build the stand-in workspace image around the published SSH server.
+	$(CONTAINER_TOOL) build -t $(E2E_WORKSPACE_IMAGE) --build-arg SSH_SERVER_IMAGE=$(E2E_SSH_SERVER_IMAGE) \
+		-f test/e2e/testdata/workspace.Dockerfile test/e2e/testdata
 
 KIND ?= kind
 E2E_KIND_CLUSTER ?= kubectl-workspace-e2e
@@ -36,8 +49,6 @@ E2E_KIND_CLUSTER ?= kubectl-workspace-e2e
 E2E_OPERATOR_CHART_VERSION ?= 0.4.1
 E2E_CERT_MANAGER_CHART_VERSION ?= v1.21.3
 E2E_TRAEFIK_CHART_VERSION ?= 42.3.2
-# The name is also in test/e2e/testdata/kind/fixtures.yaml.
-E2E_WORKSPACE_IMAGE := kubectl-workspace-e2e-workspace:local
 ifeq ($(CONTAINER_TOOL),finch)
 export KIND_EXPERIMENTAL_PROVIDER = finch
 endif
@@ -45,7 +56,7 @@ E2E_KUBECTL := kubectl --context kind-$(E2E_KIND_CLUSTER)
 E2E_HELM := helm --kube-context kind-$(E2E_KIND_CLUSTER)
 
 .PHONY: setup-e2e-kind
-setup-e2e-kind: ## Create the Kind cluster with cert-manager, the operator, the auth middleware and Traefik, and load the workspace image.
+setup-e2e-kind: e2e-workspace-image ## Create the Kind cluster with cert-manager, the operator, the auth middleware and Traefik, and load the workspace image.
 	@$(KIND) get clusters 2>/dev/null | grep -qx '$(E2E_KIND_CLUSTER)' || $(KIND) create cluster --name $(E2E_KIND_CLUSTER) --wait 90s
 	$(E2E_HELM) upgrade --install cert-manager cert-manager --repo https://charts.jetstack.io --version $(E2E_CERT_MANAGER_CHART_VERSION) \
 		--namespace cert-manager --create-namespace --set crds.enabled=true --set startupapicheck.enabled=false \
@@ -61,7 +72,6 @@ setup-e2e-kind: ## Create the Kind cluster with cert-manager, the operator, the 
 	$(E2E_KUBECTL) apply -f test/e2e/testdata/kind/traefik-tls.yaml
 	$(E2E_KUBECTL) -n traefik wait --for=condition=Ready --timeout=120s certificate/traefik-e2e
 	$(E2E_KUBECTL) -n jupyter-k8s-system rollout status deployment/authmiddleware --timeout=180s
-	$(CONTAINER_TOOL) build -t $(E2E_WORKSPACE_IMAGE) -f test/e2e/testdata/workspace.Dockerfile test/e2e/testdata
 	mkdir -p bin
 	$(CONTAINER_TOOL) save $(E2E_WORKSPACE_IMAGE) -o bin/e2e-workspace.tar
 	$(KIND) load image-archive bin/e2e-workspace.tar --name $(E2E_KIND_CLUSTER)

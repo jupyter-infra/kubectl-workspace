@@ -79,6 +79,10 @@ func startRig() (*rig, error) {
 	if cluster == "" {
 		cluster = defaultCluster
 	}
+	sidecarImage, workspaceImage, err := harness.Images()
+	if err != nil {
+		return &rig{}, err
+	}
 	r := &rig{context: "kind-" + cluster}
 	dir, err := os.MkdirTemp("", "kubectl-workspace-kind-")
 	if err != nil {
@@ -148,7 +152,8 @@ func startRig() (*rig, error) {
 	if err != nil {
 		return r, err
 	}
-	r.manifest = strings.ReplaceAll(string(fixtures), "__PORT__", port)
+	r.manifest = strings.NewReplacer("__PORT__", port, "__SIDECAR_IMAGE__", sidecarImage,
+		"__WORKSPACE_IMAGE__", workspaceImage).Replace(string(fixtures))
 	var denied error
 	err = harness.Poll(2*time.Minute, 5*time.Second, func() (bool, string) {
 		out, err := r.kubectlStdin(r.manifest, "apply", "-f", "-")

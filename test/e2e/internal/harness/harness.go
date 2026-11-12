@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"testing"
 	"time"
@@ -51,6 +52,16 @@ func CommandWithStdin(stdin string, name string, args ...string) (string, error)
 	cmd.Stdin = bytes.NewBufferString(stdin)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// Images returns the sidecar image and the stand-in workspace image the Makefile pins
+// and passes to the suites in E2E_SIDECAR_IMAGE and E2E_WORKSPACE_IMAGE.
+func Images() (sidecar, workspace string, err error) {
+	sidecar, workspace = os.Getenv("E2E_SIDECAR_IMAGE"), os.Getenv("E2E_WORKSPACE_IMAGE")
+	if sidecar == "" || workspace == "" {
+		return "", "", errors.New("E2E_SIDECAR_IMAGE and E2E_WORKSPACE_IMAGE are not set; run the suite through make")
+	}
+	return sidecar, workspace, nil
 }
 
 // FreePort returns a loopback port that was free when asked.

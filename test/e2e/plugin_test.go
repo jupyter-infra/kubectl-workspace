@@ -6,10 +6,11 @@ Distributed under the terms of the MIT license
 */
 
 // Package e2e runs the plugin as the ProxyCommand of the system's OpenSSH against
-// the published sidecar image and the SSH server from the published carrier image,
-// the two artifacts users connect to. The operator is not part of this rig: the
-// connection is dialed with --url, so the credential and the connection request
-// stay covered by the unit tests against the fake operator and by the Kind suite.
+// the published sidecar image and the SSH server from the published
+// remote-access-server image, the two artifacts users connect to. The operator is
+// not part of this rig: the connection is dialed with --url, so the credential and
+// the connection request stay covered by the unit tests against the fake operator
+// and by the Kind suite.
 package e2e
 
 import (
@@ -28,10 +29,6 @@ import (
 )
 
 const (
-	sidecarImage = "ghcr.io/jupyter-infra/workspace-websocket-proxy:v0.1.0-rc.2"
-	// workspaceImage is built from testdata/workspace.Dockerfile, which copies the
-	// SSH server out of the published carrier image into a base with a shell and a user.
-	workspaceImage = "kubectl-workspace-e2e-workspace:local"
 	alias          = "ws1.default.e2e.jk8s"
 	startupTimeout = 90 * time.Second
 )
@@ -63,6 +60,15 @@ func startRig() (string, func(), error) {
 			return "", nil, fmt.Errorf("%s is not on PATH", bin)
 		}
 	}
+	sidecarImage, workspaceImage, err := harness.Images()
+	if err != nil {
+		return "", nil, err
+	}
+	// `make e2e-workspace-image` builds the workspace image; without it the run would
+	// fail on a pull of a name no registry knows.
+	if out, err := harness.Command(tool, "image", "inspect", workspaceImage); err != nil {
+		return "", nil, fmt.Errorf("the workspace image %s is not built (%v):\n%s", workspaceImage, err, out)
+	}
 	dir, err := os.MkdirTemp("", "kubectl-workspace-e2e-")
 	if err != nil {
 		return "", nil, err
@@ -82,9 +88,6 @@ func startRig() (string, func(), error) {
 	plugin := filepath.Join(dir, "kubectl-workspace")
 	if err := harness.BuildPlugin(plugin); err != nil {
 		return fail(err)
-	}
-	if out, err := harness.Command(tool, "build", "-t", workspaceImage, "-f", "testdata/workspace.Dockerfile", "testdata"); err != nil {
-		return fail(fmt.Errorf("building the workspace image: %v\n%s", err, out))
 	}
 
 	port, err := harness.FreePort()

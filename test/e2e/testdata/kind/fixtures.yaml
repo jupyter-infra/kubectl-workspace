@@ -1,8 +1,9 @@
 # Workspace fixtures for the Kind suite: the namespaces, the Traefik middleware that
 # hands a connection's token to the auth middleware, an access strategy with the
-# WebSocket route and the published sidecar, a template with the SSH server image,
-# and one workspace. The suite replaces __PORT__ with the local port it forwards to
-# Traefik's TLS port before applying this file.
+# WebSocket route and the sidecar, a template with the stand-in workspace image, and
+# one workspace. Before applying this file the suite replaces __PORT__ with the local
+# port it forwards to Traefik's TLS port, and the two image placeholders with the
+# images the Makefile pins.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -61,7 +62,7 @@ spec:
     podModifications:
       additionalContainers:
         - name: ws-proxy
-          image: ghcr.io/jupyter-infra/workspace-websocket-proxy:v0.1.0-rc.2
+          image: __SIDECAR_IMAGE__
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -104,7 +105,7 @@ metadata:
   namespace: jupyter-k8s-shared
 spec:
   displayName: SSH workspace (Kind e2e)
-  defaultImage: kubectl-workspace-e2e-workspace:local
+  defaultImage: __WORKSPACE_IMAGE__
   appType: vscode
   defaultAccessStrategy:
     name: ssh-ws
