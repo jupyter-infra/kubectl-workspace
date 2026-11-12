@@ -6,7 +6,6 @@ Distributed under the terms of the MIT license
 package testutil
 
 import (
-	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -56,13 +55,6 @@ func newEchoServer(t *testing.T, start func(http.Handler) *httptest.Server) *Ech
 	e.server = start(e)
 	t.Cleanup(e.server.Close)
 	return e
-}
-
-// CertPool returns a pool that trusts a TLS echo server's certificate.
-func (e *EchoServer) CertPool() *x509.CertPool {
-	pool := x509.NewCertPool()
-	pool.AddCert(e.server.Certificate())
-	return pool
 }
 
 // CAPEM returns a TLS echo server's certificate as a PEM bundle.

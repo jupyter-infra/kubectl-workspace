@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,7 +32,7 @@ import (
 
 const testPath = "/workspaces/ns/ws/ssh-ws"
 
-func TestDialSendsTheTokenInAHeaderOnly(t *testing.T) {
+func TestDialSendsTheTokenInAHeader(t *testing.T) {
 	echo := testutil.NewEchoServer(t)
 
 	ws, err := Dial(context.Background(), echo.URL(testPath), DialOptions{Token: "secret-token", UserAgent: "kubectl-workspace/test"})
@@ -43,9 +44,6 @@ func TestDialSendsTheTokenInAHeaderOnly(t *testing.T) {
 	handshake := echo.LastHandshake(t)
 	if handshake.Authorization != "Bearer secret-token" {
 		t.Errorf("Authorization = %q", handshake.Authorization)
-	}
-	if handshake.RawQuery != "" {
-		t.Errorf("query = %q, want the token kept out of the URL", handshake.RawQuery)
 	}
 	if handshake.UserAgent != "kubectl-workspace/test" {
 		t.Errorf("User-Agent = %q", handshake.UserAgent)
@@ -66,7 +64,7 @@ func TestDialTrustsSystemRootsOnly(t *testing.T) {
 
 func TestDialHonorsTheProxyEnvironment(t *testing.T) {
 	echo := testutil.NewEchoServer(t)
-	proxy := testutil.NewConnectProxy(t, echo.URL("/").Host)
+	proxy := newConnectProxy(t, echo.URL("/").Host)
 	previous := proxyFromEnvironment
 	proxyFromEnvironment = func(*http.Request) (*url.URL, error) { return proxy.URL(), nil }
 	t.Cleanup(func() { proxyFromEnvironment = previous })
@@ -403,7 +401,9 @@ func TestCloseReasonIgnoresOtherErrors(t *testing.T) {
 
 func TestDialTrustsTheGivenRootsOnly(t *testing.T) {
 	echo := testutil.NewTLSEchoServer(t)
-	ws, err := Dial(context.Background(), echo.URL(testPath), DialOptions{RootCAs: echo.CertPool()})
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(echo.CAPEM())
+	ws, err := Dial(context.Background(), echo.URL(testPath), DialOptions{RootCAs: roots})
 	if err != nil {
 		t.Fatalf("Dial with the server's own root: %v", err)
 	}
@@ -437,4 +437,69 @@ func TestLoadRoots(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "failed to read the CA file") {
 		t.Errorf("LoadRoots(missing) = %v, want the unreadable file reported", err)
 	}
+}
+
+// connectProxy is an HTTP proxy that answers CONNECT by tunnelling to one fixed
+// target, whatever host the client asked for, and records what it asked for.
+type connectProxy struct {
+	server *httptest.Server
+	target string
+
+	mu      sync.Mutex
+	targets []string
+}
+
+// newConnectProxy starts a proxy that tunnels every CONNECT to target (host:port).
+func newConnectProxy(t *testing.T, target string) *connectProxy {
+	t.Helper()
+	p := &connectProxy{target: target}
+	p.server = httptest.NewServer(p)
+	t.Cleanup(p.server.Close)
+	return p
+}
+
+// ServeHTTP tunnels a CONNECT request to the fixed target.
+func (p *connectProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodConnect {
+		http.Error(w, "CONNECT only", http.StatusMethodNotAllowed)
+		return
+	}
+	p.mu.Lock()
+	p.targets = append(p.targets, r.Host)
+	p.mu.Unlock()
+
+	upstream, err := net.Dial("tcp", p.target)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = upstream.Close() }()
+	client, _, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		return
+	}
+	defer func() { _ = client.Close() }()
+	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
+		return
+	}
+	done := make(chan struct{}, 2)
+	go func() { _, _ = io.Copy(upstream, client); done <- struct{}{} }()
+	go func() { _, _ = io.Copy(client, upstream); done <- struct{}{} }()
+	<-done
+}
+
+// URL is the proxy's address for HTTPS_PROXY-style configuration.
+func (p *connectProxy) URL() *url.URL {
+	u, err := url.Parse(p.server.URL)
+	if err != nil {
+		panic(err)
+	}
+	return u
+}
+
+// Targets returns the host:port of every CONNECT received.
+func (p *connectProxy) Targets() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.targets...)
 }

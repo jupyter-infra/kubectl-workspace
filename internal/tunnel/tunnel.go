@@ -29,8 +29,10 @@ const (
 
 	// writeWait bounds one WebSocket write.
 	writeWait = 10 * time.Second
-	// maxErrorDetail bounds how much of a refusing server's body reaches the user.
-	maxErrorDetail = 512
+	// maxErrorBodyBytes bounds how much of a refusing server's body is read, and
+	// maxErrorDetailBytes how much of it reaches the user, on one line.
+	maxErrorBodyBytes   = 64 * 1024
+	maxErrorDetailBytes = 512
 
 	// closeWait is how long to wait for the server's close frame after sending ours.
 	closeWait = 2 * time.Second
@@ -54,6 +56,7 @@ var errPongFailed = errors.New("failed to answer the sidecar's ping")
 // readTimeout is three of the sidecar's 30-second ping intervals. Every frame
 // and ping extends it, so a tunnel whose far end vanished closes after three
 // missed pings instead of waiting for the kernel to give up the TCP connection.
+// A variable so tests can shorten it.
 var readTimeout = 90 * time.Second
 
 // proxyFromEnvironment honors HTTPS_PROXY and NO_PROXY for the dial; a variable so
@@ -142,8 +145,8 @@ func dialError(u *url.URL, resp *http.Response, err error) error {
 		return fmt.Errorf("failed to connect to %s: %w", u.Redacted(), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorDetail))
-	detail := strings.Join(strings.Fields(string(body)), " ")
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	detail := errorDetail(body)
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return fmt.Errorf("%s rejected the connection token (HTTP %d): %s", u.Host, resp.StatusCode, detail)
@@ -152,6 +155,16 @@ func dialError(u *url.URL, resp *http.Response, err error) error {
 	default:
 		return fmt.Errorf("%s refused the WebSocket (HTTP %d): %s", u.Host, resp.StatusCode, detail)
 	}
+}
+
+// errorDetail collapses a server's error body into one line of at most
+// maxErrorDetailBytes, with a marker when it was cut; kube formats its bodies the same way.
+func errorDetail(body []byte) string {
+	detail := strings.Join(strings.Fields(string(body)), " ")
+	if len(detail) > maxErrorDetailBytes {
+		detail = detail[:maxErrorDetailBytes] + "..."
+	}
+	return detail
 }
 
 // Relay copies in to the WebSocket as binary frames and the WebSocket's frames to
