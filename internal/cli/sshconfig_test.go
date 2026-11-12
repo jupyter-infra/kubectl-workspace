@@ -56,6 +56,17 @@ func TestSSHConfigRendersTheEntryForTheContext(t *testing.T) {
 	}
 }
 
+func TestSSHConfigWritesThePlaintextOptInIntoTheEntry(t *testing.T) {
+	kubeconfig := staticKubeconfig(t)
+	stdout, err := run(t, "ssh-config", "--kubeconfig", kubeconfig, "--command", kwCommand, "--insecure-allow-plaintext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "--insecure-allow-plaintext %h") {
+		t.Errorf("entry =\n%s\nwant connect's --insecure-allow-plaintext in the ProxyCommand", stdout)
+	}
+}
+
 func TestSSHConfigNeedsAClusterNameForAnARNContext(t *testing.T) {
 	kubeconfig := staticKubeconfig(t)
 
@@ -112,13 +123,17 @@ func TestSSHConfigWritesTheKubeconfigIntoTheEntry(t *testing.T) {
 // The installed entry is a command line OpenSSH runs verbatim, so it is run here
 // the same way, with the alias in place of %h.
 func TestInstalledEntryRunsConnect(t *testing.T) {
-	echo := testutil.NewEchoServer(t)
+	echo := testutil.NewTLSEchoServer(t)
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, echo.CAPEM(), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	op := testutil.NewFakeOperator(t, http.StatusCreated,
 		testutil.ConnectionBody(echo.URL(sshPath).String()+"?token=abc.def"))
 	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
 	configFile := filepath.Join(t.TempDir(), ".ssh", "config")
 	stdout, err := run(t, "ssh-config", "--write", "--kubeconfig", kubeconfig, "--context", testutil.ARNContext,
-		"--cluster-name", "dev", "--command", kwCommand, "--ssh-config-file", configFile)
+		"--cluster-name", "dev", "--command", kwCommand, "--ssh-config-file", configFile, "--ca-file", caFile)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -30,6 +30,7 @@ type sshConfigOptions struct {
 	user              string
 	caFile            string
 	credentialTimeout time.Duration
+	allowPlaintext    bool
 }
 
 func newSSHConfigCommand(root *rootOptions) *cobra.Command {
@@ -56,6 +57,7 @@ DNS label; contexts named like EKS ARNs need --cluster-name.`,
 		"path of the kubectl-workspace binary for the ProxyCommand (default this binary)")
 	cmd.Flags().StringVar(&o.user, "user", sshconfig.DefaultUser, "SSH user name in the entry")
 	cmd.Flags().StringVar(&o.caFile, "ca-file", "", caFileHelp+"; written into the entry")
+	cmd.Flags().BoolVar(&o.allowPlaintext, allowPlaintextFlag, false, allowPlaintextHelp+"; written into the entry")
 	cmd.Flags().DurationVar(&o.credentialTimeout, "credential-timeout", defaultCredentialTimeout,
 		credentialTimeoutHelp+"; written into the entry when it differs")
 	return cmd
@@ -88,6 +90,8 @@ func (o *sshConfigOptions) run() error {
 		Command:    command,
 		User:       o.user,
 		Windows:    runtime.GOOS == goosWindows,
+
+		AllowPlaintext: o.allowPlaintext,
 	}
 	if o.credentialTimeout != defaultCredentialTimeout {
 		entry.CredentialTimeout = o.credentialTimeout

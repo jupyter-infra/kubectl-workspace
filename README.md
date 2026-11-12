@@ -93,6 +93,7 @@ Global flags, on every command:
 | `--stdio` | required | Relay SSH between stdin/stdout and the workspace |
 | `--credential-timeout` | `5s` | How long the kubeconfig's credential plugin may take before `connect` fails |
 | `--ca-file` | system roots | PEM bundle of the ingress certificate authority, see Private certificate authorities |
+| `--insecure-allow-plaintext` | off | Accept a connection URL without TLS from the operator, for a local cluster; the token then travels in plaintext |
 
 `kubectl workspace ssh-config [--write]`, the one-time setup:
 
@@ -105,6 +106,7 @@ Global flags, on every command:
 | `--user` | `jovyan` | SSH user name in the entry |
 | `--credential-timeout` | `5s` | Written into the entry when it differs from the default |
 | `--ca-file` | system roots | Written into the entry as `connect`'s `--ca-file` |
+| `--insecure-allow-plaintext` | off | Written into the entry as `connect`'s `--insecure-allow-plaintext` |
 
 `kubectl workspace open <workspace>`, launches VS Code:
 

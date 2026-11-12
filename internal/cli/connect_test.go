@@ -36,11 +36,15 @@ func TestConnectRelaysThroughTheDirectURL(t *testing.T) {
 }
 
 func TestConnectUsesTheOperatorsTokenInAHeaderAndNeverLogsIt(t *testing.T) {
-	echo := testutil.NewEchoServer(t)
+	echo := testutil.NewTLSEchoServer(t)
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, echo.CAPEM(), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	op := testutil.NewFakeOperator(t, http.StatusCreated,
 		testutil.ConnectionBody(echo.URL(sshPath).String()+"?token=abc.def"))
 	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
-	r := startConnect(t, "-v", "connect", "--stdio", "--kubeconfig", kubeconfig, alias)
+	r := startConnect(t, "-v", "connect", "--stdio", "--kubeconfig", kubeconfig, "--ca-file", caFile, alias)
 
 	if got := r.echo(t, "hello"); got != "hello" {
 		t.Errorf("stdout = %q", got)
@@ -114,6 +118,34 @@ func TestConnectRequiresTheStdioFlag(t *testing.T) {
 	_, err := run(t, "connect", alias)
 	if err == nil || !strings.Contains(err.Error(), "stdio") {
 		t.Errorf("error = %v, want the missing --stdio flag", err)
+	}
+}
+
+// The operator's URL decides where the token goes, so a URL without TLS is refused
+// before anything is dialed; the flag is the opt-in for a local cluster.
+func TestConnectRefusesAPlaintextConnectionURLUnlessAllowed(t *testing.T) {
+	echo := testutil.NewEchoServer(t)
+	op := testutil.NewFakeOperator(t, http.StatusCreated,
+		testutil.ConnectionBody(echo.URL(sshPath).String()+"?token=abc.def"))
+	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
+
+	_, err := run(t, "connect", "--stdio", "--kubeconfig", kubeconfig, alias)
+	if err == nil || !strings.Contains(err.Error(), "without TLS") {
+		t.Errorf("error = %v, want the plaintext refusal", err)
+	}
+	if n := echo.Handshakes(); n != 0 {
+		t.Errorf("the plaintext server saw %d handshakes, want none", n)
+	}
+
+	r := startConnect(t, "connect", "--stdio", "--kubeconfig", kubeconfig, "--insecure-allow-plaintext", alias)
+	if got := r.echo(t, "hello"); got != "hello" {
+		t.Errorf("stdout = %q", got)
+	}
+	if err := r.finish(t); err != nil {
+		t.Errorf("connect returned %v", err)
+	}
+	if upgrade := echo.LastHandshake(t); upgrade.Authorization != "Bearer abc.def" {
+		t.Errorf("WebSocket Authorization = %q, want the operator's token", upgrade.Authorization)
 	}
 }
 

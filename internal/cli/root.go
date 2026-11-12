@@ -30,13 +30,18 @@ const programName = "kubectl-workspace"
 
 const goosWindows = "windows"
 
+// allowPlaintextFlag is the opt-in connect takes and ssh-config writes into the entry.
+const allowPlaintextFlag = "insecure-allow-plaintext"
+
 // Help texts of the flags that connect, ssh-config and open share.
 const (
 	caFileHelp = "PEM bundle with the certificate authority of the cluster's ingress, " +
 		"trusted instead of the system roots"
 	credentialTimeoutHelp = "how long connect waits for the kubeconfig's credential plugin"
-	clusterNameHelp       = "name of the cluster in the alias (default the context name)"
-	sshConfigFileHelp     = "SSH configuration file (default ~/.ssh/config)"
+	allowPlaintextHelp    = "accept a connection URL without TLS from the operator, for a local cluster; " +
+		"the token then travels in plaintext"
+	clusterNameHelp   = "name of the cluster in the alias (default the context name)"
+	sshConfigFileHelp = "SSH configuration file (default ~/.ssh/config)"
 )
 
 // Streams are the process's standard streams, injectable for tests.

@@ -23,6 +23,7 @@ type connectOptions struct {
 	directURL         string
 	caFile            string
 	credentialTimeout time.Duration
+	allowPlaintext    bool
 }
 
 func newConnectCommand(root *rootOptions) *cobra.Command {
@@ -52,6 +53,7 @@ credential has expired connect fails fast and names the command to run instead.`
 		"WebSocket URL to connect to directly instead of asking the cluster (development)")
 	_ = cmd.Flags().MarkHidden("url")
 	cmd.Flags().StringVar(&o.caFile, "ca-file", "", caFileHelp)
+	cmd.Flags().BoolVar(&o.allowPlaintext, allowPlaintextFlag, false, allowPlaintextHelp)
 	return cmd
 }
 
@@ -120,6 +122,10 @@ func (o *connectOptions) connection(ctx context.Context, alias sshconfig.Alias) 
 	if err != nil {
 		return nil, err
 	}
+	if conn.URL.Scheme != "wss" && !o.allowPlaintext {
+		return nil, fmt.Errorf("the operator returned a %s:// connection URL; refusing to send the token without TLS, "+
+			"pass --%s for a local cluster", conn.URL.Scheme, allowPlaintextFlag)
+	}
 	o.logf("connection granted, opening %s", conn.URL.Host)
 	return conn, nil
 }
@@ -142,6 +148,9 @@ func (o *connectOptions) credentialError(err error, contextName string, alias ss
 		args := []string{"--write", "--credential-timeout", (slowPluginFactor * o.credentialTimeout).String()}
 		if o.caFile != "" {
 			args = append(args, "--ca-file", o.caFile)
+		}
+		if o.allowPlaintext {
+			args = append(args, "--"+allowPlaintextFlag)
 		}
 		msg += "\nIf the plugin is slow rather than waiting for a sign-in, add --credential-timeout to your " +
 			"ssh-config --write command, for example:\n  " +

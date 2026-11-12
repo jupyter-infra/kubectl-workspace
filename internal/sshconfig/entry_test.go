@@ -79,6 +79,11 @@ func TestRenderProxyCommandLine(t *testing.T) {
 			wantCmd: "ProxyCommand /opt/kw connect --stdio --context dev --ca-file /etc/kw/ingress-ca.pem %h",
 		},
 		{
+			name:    "plaintext opt-in written when set",
+			entry:   Entry{Cluster: "dev", Context: "dev", Command: "/opt/kw", AllowPlaintext: true},
+			wantCmd: "ProxyCommand /opt/kw connect --stdio --context dev --insecure-allow-plaintext %h",
+		},
+		{
 			name:    "windows path keeps its backslashes",
 			entry:   Entry{Cluster: "dev", Context: "dev", Command: `C:\Users\me\.krew\bin\kubectl-workspace.exe`, Windows: true},
 			wantCmd: `ProxyCommand C:\Users\me\.krew\bin\kubectl-workspace.exe connect --stdio --context dev %h`,

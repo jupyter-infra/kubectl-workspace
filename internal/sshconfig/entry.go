@@ -35,6 +35,8 @@ type Entry struct {
 	CredentialTimeout time.Duration
 	// CAFile, when set, is written as connect's --ca-file.
 	CAFile string
+	// AllowPlaintext, when set, is written as connect's --insecure-allow-plaintext.
+	AllowPlaintext bool
 	// Windows selects the argument quoting for OpenSSH on Windows.
 	Windows bool
 }
@@ -91,6 +93,9 @@ func (e Entry) Render() string {
 	}
 	if e.CredentialTimeout > 0 {
 		args = append(args, "--credential-timeout", e.CredentialTimeout.String())
+	}
+	if e.AllowPlaintext {
+		args = append(args, "--insecure-allow-plaintext")
 	}
 	// %h is OpenSSH's token for the host name given on the command line.
 	args = append(args, "%h")

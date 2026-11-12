@@ -117,6 +117,13 @@ func (e *EchoServer) URL(path string) *url.URL {
 	return u
 }
 
+// Handshakes returns how many WebSocket handshakes the server has received.
+func (e *EchoServer) Handshakes() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.handshakes)
+}
+
 // LastHandshake returns the most recent handshake and fails the test when there is none.
 func (e *EchoServer) LastHandshake(t *testing.T) Handshake {
 	t.Helper()

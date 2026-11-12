@@ -69,7 +69,9 @@ the operator's dependency graph out of this binary.
   once the TCP connection is up.
 - The token travels in a header. The operator returns `wss://...?token=`; the auth
   middleware also reads `Authorization: Bearer`, and a header stays out of access
-  logs. The token is never logged, including under `-v`.
+  logs. The token is never logged, including under `-v`. A connection URL from the
+  operator that is not `wss` is refused before the dial, unless the entry carries
+  `--insecure-allow-plaintext` for a local cluster.
 - The alias is parsed from the right. The suffix, the cluster and the namespace are
   single labels; the workspace name may contain dots. The kubeconfig context is not
   in the alias, because EKS context names contain `:` and `/`; the entry carries it,
