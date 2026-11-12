@@ -31,7 +31,7 @@ the operator's dependency graph out of this binary.
 ```
 
 - `internal/cli`: the three commands on cobra. `connect` is the ProxyCommand,
-  `ssh-config` the one-time setup, `open` launches VS Code. `root.go` holds the
+  `ssh-config` the one-time setup, `open` launches the editor, VS Code by default or Cursor. `root.go` holds the
   shared flags, the `kubectl workspace` usage prefix and `Main`, which maps signals
   and errors to the exit code.
 - `internal/sshconfig`: the alias `<workspace>.<namespace>.<cluster>.jk8s` and the

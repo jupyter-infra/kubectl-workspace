@@ -38,6 +38,24 @@ func TestOpenPrintOnlyPrintsTheLinkAndTheSSHCommand(t *testing.T) {
 	}
 }
 
+func TestOpenBuildsTheLinkForTheChosenEditor(t *testing.T) {
+	kubeconfig := staticKubeconfig(t)
+	for _, editor := range []string{"vscode", "cursor"} {
+		stdout, err := run(t, "open", "--kubeconfig", kubeconfig, "--print-only", "--editor", editor, "ws1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := editor + "://vscode-remote/ssh-remote+ws1.team-a.dev.jk8s/home/jovyan?windowId=_blank\n"
+		if !strings.HasPrefix(stdout, want) {
+			t.Errorf("--editor %s: stdout = %q, want it to start with %q", editor, stdout, want)
+		}
+	}
+	_, err := run(t, "open", "--kubeconfig", kubeconfig, "--print-only", "--editor", "emacs", "ws1")
+	if err == nil || !strings.Contains(err.Error(), `unknown --editor "emacs", supported: cursor, vscode`) {
+		t.Errorf("error = %v, want the supported editors listed", err)
+	}
+}
+
 func TestOpenDefaultsTheNamespaceWhenTheContextHasNone(t *testing.T) {
 	kubeconfig := testutil.Kubeconfig{Server: "https://127.0.0.1:1"}.Write(t)
 

@@ -44,7 +44,8 @@ sftp <workspace>.<namespace>.<cluster>.jk8s
 kubectl workspace open <workspace>
 ```
 
-`open` launches VS Code on the workspace through its Remote-SSH extension.
+`open` launches a desktop editor on the workspace through VS Code's Remote-SSH link:
+VS Code by default, or Cursor with `--editor cursor`.
 
 ## How it works
 
@@ -108,7 +109,7 @@ Global flags, on every command:
 | `--ca-file` | system roots | Written into the entry as `connect`'s `--ca-file` |
 | `--insecure-allow-plaintext` | off | Written into the entry as `connect`'s `--insecure-allow-plaintext` |
 
-`kubectl workspace open <workspace>`, launches VS Code:
+`kubectl workspace open <workspace>`, launches the editor:
 
 | Flag | Default | Purpose |
 |------|---------|---------|
@@ -116,6 +117,7 @@ Global flags, on every command:
 | `--cluster-name` | the context name | The `<cluster>` label of the alias |
 | `--remote-path` | `/home/jovyan` | Folder to open in the workspace |
 | `--ssh-config-file` | `~/.ssh/config` | The file that must hold the cluster's entry |
+| `--editor` | `vscode` | Editor to open the workspace in: `vscode` or `cursor` |
 | `--print-only` | off | Print the link and the `ssh` command instead of launching |
 
 ## Credentials and signing in
@@ -133,7 +135,7 @@ kubelogin would also open a browser tab on every attempt, so `connect` runs it w
 `--skip-open-browser` and the sign-in URL goes to stderr instead.
 
 `open` runs the sign-in from the terminal, checks the connection with the operator
-and launches VS Code. A plugin that exits with an error gets the same hint; one that
+and launches the editor. A plugin that exits with an error gets the same hint; one that
 is not installed gets the kubeconfig's install hint. A plugin that is merely slow
 needs a longer deadline in the entry. `--write` replaces the cluster's entry, so repeat
 the other flags of your original command, such as `--ca-file` or `--user`:
