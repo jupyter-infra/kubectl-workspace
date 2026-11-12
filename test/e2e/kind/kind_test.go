@@ -142,7 +142,8 @@ func startRig() (*rig, error) {
 
 	// Right after setup the operator's webhook can still be warming up, and it reads
 	// the template and the strategy from an informer cache that may not have seen
-	// them yet, so a refused apply is retried; a denial for any other reason is final.
+	// them yet, or holds a version the controller has since updated, so a refused
+	// apply is retried; a denial for any other reason is final.
 	fixtures, err := os.ReadFile(filepath.Join("..", "testdata", "kind", "fixtures.yaml"))
 	if err != nil {
 		return r, err
@@ -151,7 +152,8 @@ func startRig() (*rig, error) {
 	var denied error
 	err = harness.Poll(2*time.Minute, 5*time.Second, func() (bool, string) {
 		out, err := r.kubectlStdin(r.manifest, "apply", "-f", "-")
-		if err != nil && strings.Contains(out, "denied the request") && !strings.Contains(out, "not found") {
+		if err != nil && strings.Contains(out, "denied the request") &&
+			!strings.Contains(out, "not found") && !strings.Contains(out, "has been modified") {
 			denied = fmt.Errorf("%s", strings.TrimSpace(out))
 			return true, ""
 		}
