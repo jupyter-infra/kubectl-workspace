@@ -132,14 +132,28 @@ func ResolveCredential(ctx context.Context, target *Target, opts CredentialOptio
 	return nil
 }
 
-// isKubelogin recognizes kubelogin under any of its names.
+// isKubelogin recognizes int128's kubelogin under any of its names. Azure's AKS
+// plugin is also called kubelogin and has no --skip-open-browser; int128's get-token
+// always carries the issuer URL, which tells them apart.
 func isKubelogin(command string, args []string) bool {
 	name := strings.TrimSuffix(strings.ToLower(filepath.Base(command)), ".exe")
 	switch name {
-	case kubeloginKrewName, kubeloginName:
+	case kubeloginKrewName:
 		return true
+	case kubeloginName:
+		return hasFlag(args, "--oidc-issuer-url")
 	case kubectlCommand:
 		return len(args) > 0 && args[0] == kubeloginPlugin
+	}
+	return false
+}
+
+// hasFlag reports whether args carry the flag, as "--name" or "--name=value".
+func hasFlag(args []string, name string) bool {
+	for _, a := range args {
+		if a == name || strings.HasPrefix(a, name+"=") {
+			return true
+		}
 	}
 	return false
 }

@@ -163,7 +163,10 @@ func TestIsKubeloginRecognizesItsThreeNames(t *testing.T) {
 		{command: "kubectl.EXE", args: []string{"oidc-login", "get-token"}, want: true},
 		{command: "kubectl-oidc_login", args: []string{"get-token"}, want: true},
 		{command: "/home/me/.krew/bin/kubectl-oidc_login", want: true},
-		{command: "kubelogin", args: []string{"get-token"}, want: true},
+		{command: "kubelogin", args: []string{"get-token", "--oidc-issuer-url=https://issuer.example.com"}, want: true},
+		{command: "kubelogin", args: []string{"get-token", "--oidc-issuer-url", "https://issuer.example.com"}, want: true},
+		{command: "kubelogin", args: []string{"get-token", "--login", "azurecli", "--server-id", "6dae42f8"}, want: false},
+		{command: "kubelogin", args: []string{"get-token"}, want: false},
 		{command: "kubectl", args: []string{"get", "pods"}, want: false},
 		{command: "kubectl", want: false},
 		{command: "aws", args: []string{"eks", "get-token"}, want: false},
@@ -198,7 +201,7 @@ func TestResolveCredentialTellsKubeloginNotToOpenABrowserWithoutATerminal(t *tes
 			pretendTerminal(t, tt.interactive)
 			target := fakeTarget("token", false)
 			target.Config.ExecProvider.Command = kubelogin
-			target.Config.ExecProvider.Args = []string{"get-token"}
+			target.Config.ExecProvider.Args = []string{"get-token", "--oidc-issuer-url=https://issuer.example.com"}
 			var stderr bytes.Buffer
 			opts := CredentialOptions{Interactive: tt.interactive, Stdin: strings.NewReader(""), Stderr: &stderr}
 			if err := ResolveCredential(context.Background(), target, opts); err != nil {
