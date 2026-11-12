@@ -34,14 +34,17 @@ type openOptions struct {
 	editor        string
 }
 
-const defaultEditor = "vscode"
+// The --editor values, each also the editor's URL scheme.
+const (
+	defaultEditor = "vscode"
+	editorCursor  = "cursor"
+)
 
-// editors maps each --editor value, which is also the editor's URL scheme, to its
-// display name; a fork of VS Code that ships Remote-SSH opens VS Code's link under
-// its own scheme.
+// editors maps each --editor value to its display name; a fork of VS Code that
+// ships Remote-SSH opens VS Code's link under its own scheme.
 var editors = map[string]string{
 	defaultEditor: "VS Code",
-	"cursor":      "Cursor",
+	editorCursor:  "Cursor",
 }
 
 // editorFor resolves an --editor value to the editor's display name.

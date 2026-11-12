@@ -133,24 +133,45 @@ func recordLaunches(t *testing.T) *[]string {
 }
 
 func TestOpenChecksTheConnectionThenLaunchesTheEditor(t *testing.T) {
-	op := testutil.NewFakeOperator(t, http.StatusCreated,
-		testutil.ConnectionBody("wss://jk8s.example.com"+sshPath+"?token=abc"))
-	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
-	launched := recordLaunches(t)
+	tests := []struct {
+		name     string
+		args     []string
+		wantName string
+		wantLink string
+	}{
+		{
+			name: "VS Code by default", wantName: "Opening VS Code on",
+			wantLink: "vscode://vscode-remote/ssh-remote+ws1.team-a.dev.jk8s/home/jovyan?windowId=_blank",
+		},
+		{
+			name: "Cursor when asked", args: []string{"--editor", "cursor"}, wantName: "Opening Cursor on",
+			wantLink: "cursor://vscode-remote/ssh-remote+ws1.team-a.dev.jk8s/home/jovyan?windowId=_blank",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			op := testutil.NewFakeOperator(t, http.StatusCreated,
+				testutil.ConnectionBody("wss://jk8s.example.com"+sshPath+"?token=abc"))
+			kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
+			launched := recordLaunches(t)
 
-	stdout, err := run(t, "open", "--kubeconfig", kubeconfig, "--ssh-config-file", installedEntry(t), "ws1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if req := op.LastRequest(t); req.Path != wantAPIPath {
-		t.Errorf("the operator saw %q, want %q", req.Path, wantAPIPath)
-	}
-	wantLink := "vscode://vscode-remote/ssh-remote+ws1.team-a.dev.jk8s/home/jovyan?windowId=_blank"
-	if len(*launched) != 1 || (*launched)[0] != wantLink {
-		t.Errorf("launched %q, want %q", *launched, wantLink)
-	}
-	if !strings.Contains(stdout, "ssh ws1.team-a.dev.jk8s") {
-		t.Errorf("stdout = %q", stdout)
+			args := append([]string{"open", "--kubeconfig", kubeconfig, "--ssh-config-file", installedEntry(t)}, tt.args...)
+			stdout, err := run(t, append(args, "ws1")...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if req := op.LastRequest(t); req.Path != wantAPIPath {
+				t.Errorf("the operator saw %q, want %q", req.Path, wantAPIPath)
+			}
+			if len(*launched) != 1 || (*launched)[0] != tt.wantLink {
+				t.Errorf("launched %q, want %q", *launched, tt.wantLink)
+			}
+			for _, want := range []string{tt.wantName, "ssh ws1.team-a.dev.jk8s"} {
+				if !strings.Contains(stdout, want) {
+					t.Errorf("stdout = %q, want it to mention %q", stdout, want)
+				}
+			}
+		})
 	}
 }
 
