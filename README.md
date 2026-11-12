@@ -105,7 +105,7 @@ Global flags, on every command:
 | `--write` | off | Install the entry into the SSH configuration file; without it the entry is printed |
 | `--cluster-name` | the context name | The `<cluster>` label of the aliases |
 | `--ssh-config-file` | `~/.ssh/config` | The file to install into |
-| `--command` | this binary | Path of `kubectl-workspace` for the ProxyCommand |
+| `--command` | this binary | Path or name of `kubectl-workspace` for the ProxyCommand |
 | `--user` | `jovyan` | SSH user name in the entry |
 | `--credential-timeout` | `5s` | Written into the entry when it differs from the default |
 | `--ca-file` | system roots | Written into the entry as `connect`'s `--ca-file` |
