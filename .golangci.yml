@@ -25,10 +25,8 @@ linters:
   settings:
     errcheck:
       exclude-functions:
-        - (io.Closer).Close
         - (*github.com/gorilla/websocket.Conn).Close
         - (net.Conn).Close
-        - (*os.File).Close
     revive:
       rules:
         - name: comment-spacings
@@ -41,7 +39,6 @@ linters:
         - name: increment-decrement
         - name: var-declaration
         - name: package-comments
-          disabled: true
         - name: unexported-naming
   exclusions:
     generated: lax

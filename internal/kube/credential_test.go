@@ -424,8 +424,10 @@ func TestIsTerminalIsFalseForAPipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
-	defer w.Close()
+	defer func() {
+		_ = r.Close()
+		_ = w.Close()
+	}()
 	if isTerminal(r) || isTerminal(strings.NewReader("")) {
 		t.Error("a pipe or a buffer counted as a terminal")
 	}
