@@ -9,8 +9,8 @@ import "time"
 
 const (
 	// connectionAPIPath is where the operator's extension API serves connections.
-	connectionAPIPath    = "apis/connection.workspace.jupyter.org/v1alpha1"
 	connectionAPIVersion = "connection.workspace.jupyter.org/v1alpha1"
+	connectionAPIPath    = "apis/" + connectionAPIVersion
 	connectionKind       = "WorkspaceConnection"
 
 	// connectionTypeSSH names the connection whose URL is the sidecar's WebSocket route.

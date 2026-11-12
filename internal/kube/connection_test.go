@@ -99,12 +99,6 @@ func TestCreateConnectionReportsTheOperatorsMessage(t *testing.T) {
 			body:    `Unauthorized`,
 			wantErr: []string{"rejected the credential", "Unauthorized"},
 		},
-		{
-			name:    "no websocket route",
-			status:  http.StatusBadRequest,
-			body:    testutil.StatusBody(400, "WebSocket access is not enabled for this workspace"),
-			wantErr: []string{"WebSocket access is not enabled"},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

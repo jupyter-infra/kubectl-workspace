@@ -57,15 +57,19 @@ const windowsUnsafe = "\"&|<>^%"
 // Validate rejects values that cannot sit on one ssh_config line and, for a Windows
 // entry, the characters its quoting cannot carry.
 func (e Entry) Validate() error {
+	// The cluster name and the user are checked by their own patterns below.
 	fields := []struct{ name, value string }{
-		{"cluster name", e.Cluster}, {"context name", e.Context}, {"kubeconfig path", e.Kubeconfig},
-		{"command path", e.Command}, {"user name", e.User}, {"CA file path", e.CAFile},
+		{"context name", e.Context}, {"kubeconfig path", e.Kubeconfig},
+		{"command path", e.Command}, {"CA file path", e.CAFile},
 	}
 	for _, field := range fields {
 		if strings.ContainsAny(field.value, "\r\n") {
 			return fmt.Errorf("the %s %q contains a line break", field.name, field.value)
 		}
-		if i := strings.IndexAny(field.value, windowsUnsafe); e.Windows && i >= 0 {
+		if !e.Windows {
+			continue
+		}
+		if i := strings.IndexAny(field.value, windowsUnsafe); i >= 0 {
 			return fmt.Errorf("the %s %q contains %q, which the ProxyCommand cannot carry on Windows; "+
 				"rename it or use a simpler path", field.name, field.value, string(field.value[i]))
 		}

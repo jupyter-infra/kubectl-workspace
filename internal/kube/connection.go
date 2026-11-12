@@ -91,6 +91,11 @@ func CreateConnection(ctx context.Context, config *rest.Config, namespace, works
 
 	resp, err := client.Do(req)
 	if err != nil {
+		// The URL error repeats the host the prefix already names.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
 		return nil, fmt.Errorf("failed to reach the API server at %s: %w", base.Host, err)
 	}
 	defer func() { _ = resp.Body.Close() }()

@@ -110,11 +110,14 @@ func (o *FakeOperator) LastRequest(t *testing.T) RecordedRequest {
 	return o.requests[len(o.requests)-1]
 }
 
-// ConnectionBody renders the operator's answer to a granted connection.
+// ConnectionBody renders the operator's answer to a granted connection for the
+// workspace ws1 in team-a, with the request's spec echoed as the operator does.
 func ConnectionBody(connectionURL string) string {
 	body, _ := json.Marshal(map[string]any{
 		"apiVersion": "connection.workspace.jupyter.org/v1alpha1",
 		"kind":       "WorkspaceConnection",
+		"metadata":   map[string]string{"namespace": "team-a"},
+		"spec":       map[string]string{"workspaceName": "ws1", "workspaceConnectionType": "ssh-over-websocket"},
 		"status": map[string]string{
 			"workspaceConnectionType": "ssh-over-websocket",
 			"workspaceConnectionUrl":  connectionURL,

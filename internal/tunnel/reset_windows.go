@@ -1,5 +1,3 @@
-//go:build windows
-
 /*
 Copyright (c) Amazon Web Services
 Distributed under the terms of the MIT license

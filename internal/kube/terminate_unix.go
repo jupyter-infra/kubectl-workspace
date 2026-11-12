@@ -24,11 +24,11 @@ type processTree struct {
 }
 
 // newProcessTree prepares cmd, which must not have started yet.
-func newProcessTree(cmd *exec.Cmd, own bool) *processTree {
-	if own {
+func newProcessTree(cmd *exec.Cmd, children bool) *processTree {
+	if children {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
-	return &processTree{cmd: cmd, group: own}
+	return &processTree{cmd: cmd, group: children}
 }
 
 // attach runs once the plugin has started; the group needs nothing more.

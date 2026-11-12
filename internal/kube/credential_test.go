@@ -58,6 +58,18 @@ func fakePlugin(mode string) int {
 		return 0
 	}
 	reportPID := func() { fmt.Fprintf(os.Stderr, "%s%d\n", pluginPIDPrefix, os.Getpid()) }
+	// startSleepingChild starts a sleeping copy of this binary, with stdout when
+	// given, and reports its pid.
+	startSleepingChild := func(stdout *os.File) bool {
+		child := exec.Command(os.Args[0])
+		child.Env = append(os.Environ(), fakePluginEnv+"=sleep")
+		child.Stdout = stdout
+		if err := child.Start(); err != nil {
+			return false
+		}
+		fmt.Fprintf(os.Stderr, "%s%d\n", childPIDPrefix, child.Process.Pid)
+		return true
+	}
 	switch mode {
 	case "sleep":
 		reportPID()
@@ -65,12 +77,9 @@ func fakePlugin(mode string) int {
 		return 0
 	case "sleep-with-child", "child-then-exit":
 		reportPID()
-		child := exec.Command(os.Args[0])
-		child.Env = append(os.Environ(), fakePluginEnv+"=sleep")
-		if err := child.Start(); err != nil {
+		if !startSleepingChild(nil) {
 			return 2
 		}
-		fmt.Fprintf(os.Stderr, "%s%d\n", childPIDPrefix, child.Process.Pid)
 		if mode == "sleep-with-child" {
 			time.Sleep(time.Minute)
 		}
@@ -78,13 +87,9 @@ func fakePlugin(mode string) int {
 	case "fail":
 		return 3
 	case "child-holds-stdout":
-		child := exec.Command(os.Args[0])
-		child.Env = append(os.Environ(), fakePluginEnv+"=sleep")
-		child.Stdout = os.Stdout
-		if err := child.Start(); err != nil {
+		if !startSleepingChild(os.Stdout) {
 			return 2
 		}
-		fmt.Fprintf(os.Stderr, "%s%d\n", childPIDPrefix, child.Process.Pid)
 		return credential(`{"token":"tok-123"}`)
 	case "resolve-sleeping-child", "resolve-interactive-sleeping-child":
 		// Stands in for connect, or for open in the interactive mode: runs a plugin
@@ -140,16 +145,24 @@ func fakeTarget(mode string, provideClusterInfo bool) *Target {
 	}
 }
 
-// argsSeen returns the arguments the fake plugin echoed.
-func argsSeen(t *testing.T, stderr string) string {
+// stderrLine returns what the fake plugin wrote after prefix on its stderr.
+func stderrLine(t *testing.T, stderr, prefix string) string {
 	t.Helper()
 	for _, line := range strings.Split(stderr, "\n") {
-		if raw, ok := strings.CutPrefix(line, "args:"); ok {
+		if raw, ok := strings.CutPrefix(line, prefix); ok {
 			return raw
 		}
 	}
-	t.Fatalf("the plugin did not report its arguments; stderr:\n%s", stderr)
+	t.Fatalf("the plugin did not report %q; stderr:\n%s", prefix, stderr)
 	return ""
+}
+
+// exeName adds the extension Windows needs to run a file.
+func exeName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
 }
 
 func TestIsKubeloginRecognizesItsThreeNames(t *testing.T) {
@@ -182,64 +195,48 @@ func TestIsKubeloginRecognizesItsThreeNames(t *testing.T) {
 // kubelogin ignores the interactive field of KUBERNETES_EXEC_INFO and opens a
 // browser unless told not to, so a run without a terminal tells it.
 func TestResolveCredentialTellsKubeloginNotToOpenABrowserWithoutATerminal(t *testing.T) {
-	name := "kubelogin"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	kubelogin := filepath.Join(t.TempDir(), name)
+	kubelogin := filepath.Join(t.TempDir(), exeName("kubelogin"))
 	testutil.Symlink(t, os.Args[0], kubelogin)
+	kubeloginArgs := []string{"get-token", "--oidc-issuer-url=https://issuer.example.com"}
 	tests := []struct {
 		name        string
+		kubelogin   bool
 		interactive bool
-		wantFlag    bool
+		wantArgs    string
 	}{
-		{name: "connect, no terminal", wantFlag: true},
-		{name: "open, with a terminal", interactive: true},
+		{name: "kubelogin under connect, no terminal", kubelogin: true, wantArgs: "get-token --oidc-issuer-url=https://issuer.example.com --skip-open-browser"},
+		{name: "kubelogin under open, with a terminal", kubelogin: true, interactive: true, wantArgs: "get-token --oidc-issuer-url=https://issuer.example.com"},
+		{name: "another plugin keeps the kubeconfig's arguments", wantArgs: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			pretendTerminal(t, tt.interactive)
 			target := fakeTarget("token", false)
-			target.Config.ExecProvider.Command = kubelogin
-			target.Config.ExecProvider.Args = []string{"get-token", "--oidc-issuer-url=https://issuer.example.com"}
+			if tt.kubelogin {
+				target.Config.ExecProvider.Command = kubelogin
+				target.Config.ExecProvider.Args = kubeloginArgs
+			}
 			var stderr bytes.Buffer
 			opts := CredentialOptions{Interactive: tt.interactive, Stdin: strings.NewReader(""), Stderr: &stderr}
 			if err := ResolveCredential(context.Background(), target, opts); err != nil {
 				t.Fatal(err)
 			}
-			args := argsSeen(t, stderr.String())
-			if got := strings.Contains(args, "--skip-open-browser"); got != tt.wantFlag {
-				t.Errorf("plugin received %q, --skip-open-browser present = %v, want %v", args, got, tt.wantFlag)
-			}
-			if !strings.HasPrefix(args, "get-token") {
-				t.Errorf("plugin received %q, want the kubeconfig's own arguments first", args)
+			if args := stderrLine(t, stderr.String(), "args:"); args != tt.wantArgs {
+				t.Errorf("plugin received %q, want %q", args, tt.wantArgs)
 			}
 		})
-	}
-	// Any other plugin keeps its arguments as the kubeconfig wrote them.
-	var stderr bytes.Buffer
-	if err := ResolveCredential(context.Background(), fakeTarget("token", false), CredentialOptions{Stderr: &stderr}); err != nil {
-		t.Fatal(err)
-	}
-	if args := argsSeen(t, stderr.String()); args != "" {
-		t.Errorf("a plugin that is not kubelogin received %q, want no added arguments", args)
 	}
 }
 
 // execInfoSeen parses the KUBERNETES_EXEC_INFO the fake plugin echoed.
 func execInfoSeen(t *testing.T, stderr string) clientauthv1.ExecCredential {
 	t.Helper()
-	for _, line := range strings.Split(stderr, "\n") {
-		if raw, ok := strings.CutPrefix(line, "exec-info:"); ok {
-			var cred clientauthv1.ExecCredential
-			if err := json.Unmarshal([]byte(raw), &cred); err != nil {
-				t.Fatalf("invalid exec info %q: %v", raw, err)
-			}
-			return cred
-		}
+	raw := stderrLine(t, stderr, "exec-info:")
+	var cred clientauthv1.ExecCredential
+	if err := json.Unmarshal([]byte(raw), &cred); err != nil {
+		t.Fatalf("invalid exec info %q: %v", raw, err)
 	}
-	t.Fatalf("the plugin did not report its exec info; stderr:\n%s", stderr)
-	return clientauthv1.ExecCredential{}
+	return cred
 }
 
 func TestResolveCredentialReplacesThePluginWithItsToken(t *testing.T) {
@@ -486,10 +483,7 @@ func TestResolveCredentialReportsAMissingPluginWithTheInstallHint(t *testing.T) 
 func TestResolveCredentialReportsAPluginThatCannotStart(t *testing.T) {
 	target := fakeTarget("token", false)
 	// A file that exists but cannot run: no execute bit on Unix, not a program on Windows.
-	plugin := filepath.Join(t.TempDir(), "plugin")
-	if runtime.GOOS == "windows" {
-		plugin += ".exe"
-	}
+	plugin := filepath.Join(t.TempDir(), exeName("plugin"))
 	if err := os.WriteFile(plugin, []byte("not a program"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -591,16 +585,12 @@ func TestProcessTreeReportsAFinishedPluginAsDone(t *testing.T) {
 // reportedPID reads a pid the fake plugin reported on stderr under prefix.
 func reportedPID(t *testing.T, stderr, prefix string) int {
 	t.Helper()
-	for _, line := range strings.Split(stderr, "\n") {
-		if raw, ok := strings.CutPrefix(line, prefix); ok {
-			pid, err := strconv.Atoi(raw)
-			if err == nil && pid != 0 {
-				return pid
-			}
-		}
+	raw := stderrLine(t, stderr, prefix)
+	pid, err := strconv.Atoi(raw)
+	if err != nil || pid == 0 {
+		t.Fatalf("the plugin reported %q after %q, want a pid", raw, prefix)
 	}
-	t.Fatalf("the plugin did not report %q; stderr:\n%s", prefix, stderr)
-	return 0
+	return pid
 }
 
 // scanPIDs reads a live stderr until every prefix has reported a pid, then keeps

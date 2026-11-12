@@ -26,7 +26,6 @@ const (
 // ExecPlugin is a kubeconfig exec credential plugin.
 type ExecPlugin struct {
 	Command     string
-	Args        []string
 	Env         map[string]string
 	InstallHint string
 }
@@ -68,7 +67,6 @@ func (k Kubeconfig) Write(t *testing.T) string {
 	if k.Exec != nil {
 		auth.Exec = &clientcmdapi.ExecConfig{
 			Command:         k.Exec.Command,
-			Args:            k.Exec.Args,
 			APIVersion:      "client.authentication.k8s.io/v1",
 			InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
 			InstallHint:     k.Exec.InstallHint,
