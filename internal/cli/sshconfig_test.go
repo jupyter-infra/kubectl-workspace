@@ -165,16 +165,18 @@ func TestInstalledEntryRunsConnect(t *testing.T) {
 	}
 }
 
-// shellWords splits a ProxyCommand line the way a POSIX shell would for the
-// quoting ShellQuote produces: double quotes group, a backslash escapes inside them.
+// shellWords splits a ProxyCommand line the way the ssh client of this OS does:
+// double quotes group, and a backslash escapes inside them only in ShellQuote's
+// form, since WindowsQuote keeps backslashes verbatim.
 func shellWords(line string) []string {
+	escapes := runtime.GOOS != goosWindows
 	var words []string
 	var current strings.Builder
 	inWord, quoted := false, false
 	for i := 0; i < len(line); i++ {
 		c := line[i]
 		switch {
-		case quoted && c == '\\' && i+1 < len(line):
+		case quoted && escapes && c == '\\' && i+1 < len(line):
 			i++
 			current.WriteByte(line[i])
 		case c == '"':
@@ -195,6 +197,22 @@ func shellWords(line string) []string {
 		words = append(words, current.String())
 	}
 	return words
+}
+
+func TestShellWordsUndoesTheEntryQuoting(t *testing.T) {
+	quote := sshconfig.ShellQuote
+	if runtime.GOOS == goosWindows {
+		quote = sshconfig.WindowsQuote
+	}
+	want := []string{"plain", `C:\Users\A Name\kubeconfig`, "/My Files/ws $HOME", "--flag"}
+	quoted := make([]string, len(want))
+	for i, w := range want {
+		quoted[i] = quote(w)
+	}
+	got := shellWords(strings.Join(quoted, " "))
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("shellWords(%q) = %q, want %q", strings.Join(quoted, " "), got, want)
+	}
 }
 
 func TestSSHConfigChecksTheCAFileAndWritesItsAbsolutePath(t *testing.T) {
