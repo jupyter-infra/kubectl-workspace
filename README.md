@@ -45,7 +45,8 @@ kubectl workspace open <workspace>
 ```
 
 `open` launches a desktop editor on the workspace through VS Code's Remote-SSH link:
-VS Code by default, or Cursor with `--editor cursor`.
+VS Code by default, or Cursor with `--editor cursor`. Either editor needs its Remote-SSH
+extension; Cursor's is `anysphere.remote-ssh`, which a fresh install does not include.
 
 ## How it works
 
