@@ -111,23 +111,29 @@ func SSH(t *testing.T, sshConfig string, stdin []byte, args ...string) (stdout, 
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err := cmd.Run()
-	var exitErr *exec.ExitError
-	switch {
-	case errors.As(err, &exitErr):
-		code = exitErr.ExitCode()
-	case err != nil:
-		t.Fatalf("ssh did not run: %v (stderr: %s)", err, errOut.String())
-	}
-	return out.String(), errOut.String(), code
+	return out.String(), errOut.String(), exitCode(t, "ssh", err, errOut.String())
 }
 
 // SFTP runs the system's sftp with the ssh_config file and a batch file against
-// alias and returns its combined output.
-func SFTP(sshConfig, batch, alias string, extra ...string) (string, error) {
+// alias and returns its combined output and exit code.
+func SFTP(t *testing.T, sshConfig, batch, alias string) (output string, code int) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), sessionTimeout)
 	defer cancel()
-	args := append([]string{"-F", sshConfig}, extra...)
-	args = append(args, "-b", batch, alias)
-	out, err := exec.CommandContext(ctx, "sftp", args...).CombinedOutput()
-	return string(out), err
+	out, err := exec.CommandContext(ctx, "sftp", "-F", sshConfig, "-b", batch, alias).CombinedOutput()
+	return string(out), exitCode(t, "sftp", err, string(out))
+}
+
+// exitCode reads the exit status out of a finished command's error; a command that
+// did not run at all fails the test.
+func exitCode(t *testing.T, name string, err error, output string) int {
+	t.Helper()
+	var exitErr *exec.ExitError
+	switch {
+	case errors.As(err, &exitErr):
+		return exitErr.ExitCode()
+	case err != nil:
+		t.Fatalf("%s did not run: %v\n%s", name, err, output)
+	}
+	return 0
 }

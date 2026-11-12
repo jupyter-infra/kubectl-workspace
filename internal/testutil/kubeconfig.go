@@ -40,7 +40,9 @@ type Kubeconfig struct {
 	CAPEM  string
 	// Namespace is the context's namespace; empty leaves it unset.
 	Namespace string
-	Exec      *ExecPlugin
+	// Token is the static credential; empty means the Token constant.
+	Token string
+	Exec  *ExecPlugin
 	// NoCurrentContext leaves current-context unset.
 	NoCurrentContext bool
 }
@@ -74,6 +76,8 @@ func (k Kubeconfig) Write(t *testing.T) string {
 		for name, value := range k.Exec.Env {
 			auth.Exec.Env = append(auth.Exec.Env, clientcmdapi.ExecEnvVar{Name: name, Value: value})
 		}
+	} else if k.Token != "" {
+		auth.Token = k.Token
 	} else {
 		auth.Token = Token
 	}

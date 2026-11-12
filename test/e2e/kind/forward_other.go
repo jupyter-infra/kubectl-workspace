@@ -9,5 +9,6 @@ package kind
 
 import "os/exec"
 
-// dieWithParent is a no-op: only Linux can tie a child's life to its parent's.
+// dieWithParent is a no-op: macOS has no parent-death signal, so a port-forward
+// left by an interrupted run has to be stopped by hand.
 func dieWithParent(*exec.Cmd) {}

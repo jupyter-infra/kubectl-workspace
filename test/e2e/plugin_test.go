@@ -17,10 +17,12 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +33,9 @@ import (
 const (
 	alias          = "ws1.default.e2e.jk8s"
 	startupTimeout = 90 * time.Second
+	// containerLabel marks the rig's containers, so a run that ended before its
+	// cleanup leaves nothing the next run has to remove by hand.
+	containerLabel = "kubectl-workspace-e2e=rig"
 )
 
 // sshConfig routes the alias through the plugin to the sidecar container.
@@ -90,23 +95,28 @@ func startRig() (string, func(), error) {
 		return fail(err)
 	}
 
+	if stale, err := harness.Output(tool, "ps", "-aq", "--filter", "label="+containerLabel); err == nil {
+		for _, id := range strings.Fields(stale) {
+			_ = exec.Command(tool, "rm", "-f", id).Run()
+		}
+	}
 	port, err := harness.FreePort()
 	if err != nil {
 		return fail(err)
 	}
-	suffix := fmt.Sprintf("%d", os.Getpid())
+	suffix := strconv.Itoa(os.Getpid())
 	workspace, proxy := "kw-e2e-workspace-"+suffix, "kw-e2e-proxy-"+suffix
 	// The sidecar joins the workspace container's network namespace, as the two
 	// containers share one in a pod, and reaches the SSH server on loopback. The
 	// published port belongs to that namespace, so it is declared on the first
 	// container.
-	if out, err := harness.Command(tool, "run", "-d", "--name", workspace,
+	if out, err := harness.Command(tool, "run", "-d", "--name", workspace, "--label", containerLabel,
 		"-p", "127.0.0.1:"+port+":8080", workspaceImage); err != nil {
 		return fail(fmt.Errorf("starting the workspace container: %v\n%s", err, out))
 	}
 	containers = append(containers, workspace)
-	if out, err := harness.Command(tool, "run", "-d", "--name", proxy, "--network", "container:"+workspace,
-		"-e", "LISTEN_ADDR=:8080", "-e", "TARGET_HOST=127.0.0.1", "-e", "TARGET_PORT=2222",
+	if out, err := harness.Command(tool, "run", "-d", "--name", proxy, "--label", containerLabel,
+		"--network", "container:"+workspace, "-e", "LISTEN_ADDR=:8080", "-e", "TARGET_HOST=127.0.0.1", "-e", "TARGET_PORT=2222",
 		"-e", "TARGET_HEALTH_INTERVAL=3s", sidecarImage); err != nil {
 		return fail(fmt.Errorf("starting the sidecar container: %v\n%s", err, out))
 	}
@@ -138,10 +148,9 @@ func waitForTarget(proxyAddr string) error {
 		if err != nil {
 			return false, err.Error()
 		}
-		body := make([]byte, 512)
-		n, _ := resp.Body.Read(body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		_ = resp.Body.Close()
-		return resp.StatusCode == http.StatusOK, fmt.Sprintf("%d %s", resp.StatusCode, body[:n])
+		return resp.StatusCode == http.StatusOK, fmt.Sprintf("%d %s", resp.StatusCode, body)
 	})
 	if err != nil {
 		return fmt.Errorf("the sidecar did not report the SSH server reachable: %v", err)
@@ -200,9 +209,8 @@ func TestSFTPTransfersAFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := harness.SFTP(sshConfig, batch, alias)
-	if err != nil {
-		t.Fatalf("sftp: %v\n%s", err, out)
+	if out, code := harness.SFTP(t, sshConfig, batch, alias); code != 0 {
+		t.Fatalf("sftp exit %d\n%s", code, out)
 	}
 	got, err := os.ReadFile(back)
 	if err != nil {

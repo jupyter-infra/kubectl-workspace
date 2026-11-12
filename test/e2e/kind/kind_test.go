@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jupyter-infra/kubectl-workspace/internal/testutil"
 	"github.com/jupyter-infra/kubectl-workspace/test/e2e/internal/harness"
 )
 
@@ -127,6 +128,7 @@ func startRig() (*rig, error) {
 		_ = conn.Close()
 		return true, ""
 	}); err != nil {
+		r.stopForward()
 		return r, fmt.Errorf("Traefik is not answering through the port-forward: %v\n%s", err, forwardOutput.String())
 	}
 
@@ -188,10 +190,7 @@ func startRig() (*rig, error) {
 // cleanup removes the fixtures and the rig's files; with E2E_KIND_KEEP set both stay,
 // so the rig can be driven by hand with the kubeconfig and ssh_config it prints.
 func (r *rig) cleanup() {
-	if r.forward != nil && r.forward.Process != nil {
-		_ = r.forward.Process.Kill()
-		_ = r.forward.Wait()
-	}
+	r.stopForward()
 	if os.Getenv("E2E_KIND_KEEP") != "" {
 		fmt.Fprintf(os.Stderr, "kind rig kept: fixtures in the cluster, files in %s; its ssh_config needs\n"+
 			"  kubectl --kubeconfig %s -n %s port-forward svc/traefik %s:443\n", r.dir, r.kubeconfig, traefikNS, r.port)
@@ -203,6 +202,16 @@ func (r *rig) cleanup() {
 	if r.dir != "" {
 		_ = os.RemoveAll(r.dir)
 	}
+}
+
+// stopForward ends the port-forward and waits for it, after which its output is complete.
+func (r *rig) stopForward() {
+	if r.forward == nil || r.forward.Process == nil {
+		return
+	}
+	_ = r.forward.Process.Kill()
+	_ = r.forward.Wait()
+	r.forward = nil
 }
 
 func (r *rig) kubectl(args ...string) (string, error) {
@@ -267,23 +276,7 @@ func (r *rig) serviceAccountKubeconfig(t *testing.T, name string) string {
 	if err != nil {
 		t.Fatalf("the cluster's CA is not base64: %v", err)
 	}
-	dir := t.TempDir()
-	caPath := filepath.Join(dir, "ca.crt")
-	if err := os.WriteFile(caPath, ca, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(dir, "kubeconfig")
-	for _, args := range [][]string{
-		{"set-cluster", "nobody", "--server=" + server, "--certificate-authority=" + caPath, "--embed-certs=true"},
-		{"set-credentials", "nobody", "--token=" + token},
-		{"set-context", "nobody", "--cluster=nobody", "--user=nobody", "--namespace=" + namespace},
-		{"use-context", "nobody"},
-	} {
-		if out, err := harness.Command("kubectl", append([]string{"--kubeconfig", file, "config"}, args...)...); err != nil {
-			t.Fatalf("kubectl config %s: %v\n%s", strings.Join(args, " "), err, out)
-		}
-	}
-	return file
+	return testutil.Kubeconfig{Name: "nobody", Server: server, CAPEM: string(ca), Namespace: namespace, Token: token}.Write(t)
 }
 
 func TestSSHReachesTheWorkspaceThroughTheIngress(t *testing.T) {
