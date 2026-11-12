@@ -2,7 +2,7 @@
 
 `kubectl workspace` connects your machine to a
 [jupyter-k8s](https://github.com/jupyter-infra/jupyter-k8s) workspace over SSH.
-OpenSSH hands it the connection as the `ProxyCommand`; it asks the operator for a
+OpenSSH runs it as the `ProxyCommand`; it asks the operator for a
 connection with your kubeconfig credential, opens a WebSocket through the cluster's
 HTTPS ingress to the workspace's sidecar and relays the SSH bytes. The same alias
 serves `ssh`, `sftp` and VS Code's Remote-SSH. No SSH key is created or
@@ -11,7 +11,8 @@ distributed: your Kubernetes identity is the credential.
 ## Install
 
 `make build` writes `bin/kubectl-workspace`; copy it onto `PATH`, where `kubectl`
-finds it as `kubectl workspace`. Release archives and a krew manifest follow.
+finds it as `kubectl workspace`. Release archives and a krew manifest will come with
+the first release.
 
 ## Set up a cluster
 
@@ -95,7 +96,7 @@ Global flags, on every command:
 | `--stdio` | required | Relay SSH between stdin/stdout and the workspace |
 | `--credential-timeout` | `5s` | How long the kubeconfig's credential plugin may take before `connect` fails |
 | `--ca-file` | system roots | PEM bundle of the ingress certificate authority, see Private certificate authorities |
-| `--insecure-allow-plaintext` | off | Accept a connection URL without TLS from the operator, for a local cluster; the token then travels in plaintext |
+| `--insecure-allow-plaintext` | off | Accept a connection URL without TLS from the operator, for a local cluster; the token then travels in plaintext. The operator today always returns `wss` |
 
 `kubectl workspace ssh-config [--write]`, the one-time setup:
 
@@ -124,9 +125,9 @@ Global flags, on every command:
 ## Credentials and signing in
 
 When the kubeconfig credential comes from a plugin such as kubelogin and has
-expired, the plugin would wait for a browser sign-in. Inside an SSH connection that
-cannot complete, so `connect` gives the plugin five seconds, stops it and fails with
-the command to run instead:
+expired, the plugin waits for a browser sign-in. Inside an SSH connection no browser
+sign-in can complete, so `connect` gives the plugin five seconds, stops it and fails
+with the command to run instead:
 
 ```
 kubectl workspace open <workspace>

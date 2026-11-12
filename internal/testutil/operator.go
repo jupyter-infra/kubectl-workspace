@@ -5,8 +5,7 @@ Distributed under the terms of the MIT license
 
 // Package testutil provides the fakes the plugin's tests share: an operator that
 // answers connection requests, a WebSocket echo server standing in for the
-// sidecar, kubeconfig files pointing at them, an HTTP CONNECT proxy and a
-// listener that never answers.
+// sidecar, kubeconfig files pointing at them and a listener that never answers.
 package testutil
 
 import (

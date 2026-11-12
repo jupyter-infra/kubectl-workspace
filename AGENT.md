@@ -30,10 +30,11 @@ the operator's dependency graph out of this binary.
                               '-- tunnel.Relay             stdin -> frames, frames -> stdout
 ```
 
+- `cmd/kubectl-workspace`: the entry point; it imports client-go's auth providers.
 - `internal/cli`: the three commands on cobra. `connect` is the ProxyCommand,
-  `ssh-config` the one-time setup, `open` launches the editor, VS Code by default or Cursor. `root.go` holds the
-  shared flags, the `kubectl workspace` usage prefix and `Main`, which maps signals
-  and errors to the exit code.
+  `ssh-config` the one-time setup, `open` launches the editor, VS Code by default or
+  Cursor. `root.go` holds the shared flags, the `kubectl workspace` usage prefix and
+  `Main`, which maps signals and errors to the exit code.
 - `internal/sshconfig`: the alias `<workspace>.<namespace>.<cluster>.jk8s` and the
   per-cluster entry `Host *.<cluster>.jk8s`, rendered between marker comments and
   installed into `~/.ssh/config`.
@@ -44,7 +45,11 @@ the operator's dependency graph out of this binary.
   `--ca-file` bundle, and the stdio relay.
 - `internal/testutil`: the fakes the tests share: an operator answering connection
   requests over TLS, a WebSocket echo server standing in for the sidecar, a
-  kubeconfig writer, an HTTP CONNECT proxy and a listener that never answers.
+  kubeconfig writer and a listener that never answers.
+- `test/e2e`: the system's `ssh` and `sftp` through the plugin against the published
+  sidecar and SSH server images (`e2e` build tag). `test/e2e/kind`: the plugin against
+  a Kind cluster with the operator, the auth middleware and Traefik.
+  `test/e2e/internal/harness`: what both suites share.
 
 ## Invariants
 
@@ -89,20 +94,6 @@ the operator's dependency graph out of this binary.
   cmd.exe or PowerShell, so a Windows entry refuses the characters that quoting
   cannot carry there instead of escaping them.
 
-## Repository Layout
-
-| Directory / file | Purpose |
-|------------------|---------|
-| `cmd/kubectl-workspace/` | Entry point; imports client-go's auth providers |
-| `internal/cli/` | `connect`, `ssh-config`, `open`, shared flags, `Main` |
-| `internal/kube/` | Kubeconfig loading, exec credential plugin with a deadline, `WorkspaceConnection` creation |
-| `internal/sshconfig/` | Alias parsing, entry rendering and installation |
-| `internal/tunnel/` | WebSocket dial with the token in a header, stdin/stdout relay |
-| `internal/testutil/` | Fakes shared by the tests |
-| `test/e2e/` | The system's `ssh` and `sftp` through the plugin against the published sidecar and SSH server images (`e2e` build tag) |
-| `test/e2e/kind/` | The plugin against a Kind cluster with the operator, the auth middleware and Traefik (`e2e` build tag) |
-| `test/e2e/internal/harness/` | Helpers both end-to-end suites share |
-
 ## Development
 
 ### Prerequisites
@@ -139,11 +130,11 @@ silence on stderr when the client closes and on SIGHUP; the same test binary sta
 in for a credential plugin that never answers or fails (`KUBECTL_WORKSPACE_TEST_PLUGIN`).
 
 `test/e2e` runs the real artifacts: the published sidecar image and the SSH server
-from the published carrier image, in two containers sharing one network namespace
-as they share a pod's, with the system's `ssh` and `sftp` running the plugin as the
-ProxyCommand through `--url`. It proves a command, its exit status, a terminal, a
-4 MiB transfer each way and an SFTP round trip. The operator is not in that rig; the
-Kind suite covers it.
+from the published `remote-access-server` image, in two containers sharing one
+network namespace as they share a pod's, with the system's `ssh` and `sftp` running
+the plugin as the ProxyCommand through `--url`. It proves a command, its exit status,
+a terminal, a 4 MiB transfer each way and an SFTP round trip. The operator is not in
+that rig; the Kind suite covers it.
 
 `test/e2e/kind` runs the plugin the way a deployment does: a Kind cluster with the
 operator chart from GHCR and token signing on, the auth middleware with bearer auth,
