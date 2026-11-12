@@ -20,10 +20,6 @@ import (
 	"github.com/jupyter-infra/kubectl-workspace/internal/sshconfig"
 )
 
-// defaultRemotePath is the workspace user's home, where the persistent volume is
-// mounted.
-const defaultRemotePath = "/home/jovyan"
-
 type openOptions struct {
 	*rootOptions
 	namespace     string
@@ -33,12 +29,6 @@ type openOptions struct {
 	printOnly     bool
 	editor        string
 }
-
-// The --editor values, each also the editor's URL scheme.
-const (
-	defaultEditor = "vscode"
-	editorCursor  = "cursor"
-)
 
 // editors maps each --editor value to its display name; a fork of VS Code that
 // ships Remote-SSH opens VS Code's link under its own scheme.

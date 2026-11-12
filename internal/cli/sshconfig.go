@@ -8,8 +8,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -143,54 +141,4 @@ func (o *sshConfigOptions) kubeconfigForEntry() (string, error) {
 		path = env
 	}
 	return absPath("kubeconfig", path)
-}
-
-// absPath makes a path absolute, naming what it is in the error.
-func absPath(what, path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve the %s path %q: %w", what, path, err)
-	}
-	return abs, nil
-}
-
-// commandForEntry resolves --command for the ProxyCommand line: this binary when
-// empty, a path made absolute because OpenSSH runs the command from its own working
-// directory, and a bare name left to the PATH lookup at connection time.
-func commandForEntry(command string) (string, error) {
-	switch {
-	case command == "":
-		return executablePath()
-	case strings.ContainsAny(command, `/\`):
-		return absPath("command", command)
-	default:
-		return command, nil
-	}
-}
-
-// executablePath returns the path OpenSSH should run. When this binary is on PATH
-// under its own name, that path is preferred: krew's PATH entry is a symlink into
-// a versioned store directory, and the resolved path would break at the next
-// upgrade.
-func executablePath() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("failed to locate this binary: %w", err)
-	}
-	if onPath, err := exec.LookPath(filepath.Base(exe)); err == nil && sameFile(onPath, exe) {
-		return onPath, nil
-	}
-	return exe, nil
-}
-
-func sameFile(a, b string) bool {
-	infoA, err := os.Stat(a)
-	if err != nil {
-		return false
-	}
-	infoB, err := os.Stat(b)
-	if err != nil {
-		return false
-	}
-	return os.SameFile(infoA, infoB)
 }

@@ -19,21 +19,6 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-const (
-	// connectionAPIPath is where the operator's extension API serves connections.
-	connectionAPIPath    = "apis/connection.workspace.jupyter.org/v1alpha1"
-	connectionAPIVersion = "connection.workspace.jupyter.org/v1alpha1"
-	connectionKind       = "WorkspaceConnection"
-
-	// connectionTypeSSH names the connection whose URL is the sidecar's WebSocket route.
-	connectionTypeSSH = "ssh-over-websocket"
-
-	maxResponseBody = 64 * 1024
-	// maxErrorDetail bounds how much of a body that is not a Status object, an
-	// ingress error page for example, ends up in the error line.
-	maxErrorDetail = 512
-)
-
 // connectionRequest mirrors WorkspaceConnectionRequest in the operator's
 // api/connection/v1alpha1 package. The operator module is not imported because
 // it would pull the controller's dependency graph into this binary.
@@ -109,7 +94,7 @@ func CreateConnection(ctx context.Context, config *rest.Config, namespace, works
 		return nil, fmt.Errorf("failed to reach the API server at %s: %w", base.Host, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the API server's response: %w", err)
 	}
@@ -138,8 +123,8 @@ func responseError(code int, data []byte, namespace, workspace string) error {
 	message := strings.TrimSpace(status.Message)
 	if message == "" {
 		message = strings.Join(strings.Fields(string(data)), " ")
-		if len(message) > maxErrorDetail {
-			message = message[:maxErrorDetail] + "..."
+		if len(message) > maxErrorDetailBytes {
+			message = message[:maxErrorDetailBytes] + "..."
 		}
 	}
 	name := namespace + "/" + workspace

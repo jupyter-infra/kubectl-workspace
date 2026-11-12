@@ -130,9 +130,6 @@ func (o *connectOptions) connection(ctx context.Context, alias sshconfig.Alias) 
 	return conn, nil
 }
 
-// slowPluginFactor scales the active deadline into the one the hint suggests.
-const slowPluginFactor = 3
-
 // credentialError adds the sign-in command to failures a terminal can fix; a missing
 // plugin already carries the kubeconfig's install hint.
 func (o *connectOptions) credentialError(err error, contextName string, alias sshconfig.Alias) error {

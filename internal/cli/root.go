@@ -14,7 +14,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -22,26 +21,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jupyter-infra/kubectl-workspace/internal/sshconfig"
-)
-
-// programName prefixes every diagnostic, so a line in the editor's SSH log can be
-// traced back to this program.
-const programName = "kubectl-workspace"
-
-const goosWindows = "windows"
-
-// allowPlaintextFlag is the opt-in connect takes and ssh-config writes into the entry.
-const allowPlaintextFlag = "insecure-allow-plaintext"
-
-// Help texts of the flags that connect, ssh-config and open share.
-const (
-	caFileHelp = "PEM bundle with the certificate authority of the cluster's ingress, " +
-		"trusted instead of the system roots"
-	credentialTimeoutHelp = "how long connect waits for the kubeconfig's credential plugin"
-	allowPlaintextHelp    = "accept a connection URL without TLS from the operator, for a local cluster; " +
-		"the token then travels in plaintext"
-	clusterNameHelp   = "name of the cluster in the alias (default the context name)"
-	sshConfigFileHelp = "SSH configuration file (default ~/.ssh/config)"
 )
 
 // Streams are the process's standard streams, injectable for tests.
@@ -81,29 +60,6 @@ func Main(args []string, streams Streams, version string) int {
 		return 1
 	}
 	return 0
-}
-
-// kubectlWorkspaceCommand renders a command the user can paste into a shell;
-// --cluster-name appears only when the alias label is not the context name, as
-// with an EKS ARN.
-func kubectlWorkspaceCommand(subcommand, kubeconfig, contextName, cluster string, args ...string) string {
-	parts := []string{"kubectl", "workspace", subcommand}
-	parts = append(parts, args...)
-	if kubeconfig != "" {
-		parts = append(parts, "--kubeconfig", kubeconfig)
-	}
-	parts = append(parts, "--context", contextName)
-	if cluster != contextName {
-		parts = append(parts, "--cluster-name", cluster)
-	}
-	quote := sshconfig.ShellQuote
-	if runtime.GOOS == goosWindows {
-		quote = sshconfig.WindowsQuote
-	}
-	for i, part := range parts {
-		parts[i] = quote(part)
-	}
-	return strings.Join(parts, " ")
 }
 
 // sshConfigPath returns the file --ssh-config-file names, or the default.
@@ -149,6 +105,8 @@ reach any workspace in that cluster, and "open" launches VS Code on one.`,
 	return root
 }
 
+// clusterName resolves the alias label: the --cluster-name flag when given, else
+// the context name, which then has to be a valid label.
 func clusterName(flag, contextName string) (string, error) {
 	if flag != "" {
 		return flag, sshconfig.ValidateClusterName(flag)
@@ -158,10 +116,6 @@ func clusterName(flag, contextName string) (string, error) {
 	}
 	return contextName, nil
 }
-
-// defaultCredentialTimeout leaves room inside Remote-SSH's 15-second connection
-// timeout for the connection request and the WebSocket handshake.
-const defaultCredentialTimeout = 5 * time.Second
 
 func checkCredentialTimeout(d time.Duration) error {
 	if d <= 0 {

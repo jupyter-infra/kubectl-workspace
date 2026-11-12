@@ -25,13 +25,6 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
-// execInfoEnv is the variable through which client-go describes the request to
-// an exec credential plugin.
-const execInfoEnv = "KUBERNETES_EXEC_INFO"
-
-// killDelay is how long a plugin gets to exit after SIGTERM before SIGKILL.
-const killDelay = 2 * time.Second
-
 // SignInRequiredError reports an exec credential plugin that produced nothing
 // before the deadline.
 type SignInRequiredError struct {
@@ -138,14 +131,6 @@ func ResolveCredential(ctx context.Context, target *Target, opts CredentialOptio
 	apply(target.Config, status)
 	return nil
 }
-
-// The names kubelogin runs by: kubectl's oidc-login plugin, the krew binary, its own binary.
-const (
-	kubectlCommand    = "kubectl"
-	kubeloginPlugin   = "oidc-login"
-	kubeloginKrewName = "kubectl-oidc_login"
-	kubeloginName     = "kubelogin"
-)
 
 // isKubelogin recognizes kubelogin under any of its names.
 func isKubelogin(command string, args []string) bool {
