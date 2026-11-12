@@ -113,7 +113,9 @@ func ResolveCredential(ctx context.Context, target *Target, opts CredentialOptio
 	tree.attach()
 	// The deadline is read only for a failed run: a plugin that exited successfully
 	// produced its credential, even when the deadline passed between its exit and this check.
-	if runErr := cmd.Wait(); runErr != nil {
+	// ErrWaitDelay is a successful exit too: a process the plugin started still held
+	// its stdout when WaitDelay ran out, and the credential is already in the buffer.
+	if runErr := cmd.Wait(); runErr != nil && !errors.Is(runErr, exec.ErrWaitDelay) {
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
 			return &SignInRequiredError{Context: target.Context, Command: provider.Command, Timeout: opts.Timeout}

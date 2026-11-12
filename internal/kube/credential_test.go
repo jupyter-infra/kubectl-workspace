@@ -74,6 +74,15 @@ func fakePlugin(mode string) int {
 		return 0
 	case "fail":
 		return 3
+	case "child-holds-stdout":
+		child := exec.Command(os.Args[0])
+		child.Env = append(os.Environ(), fakePluginEnv+"=sleep")
+		child.Stdout = os.Stdout
+		if err := child.Start(); err != nil {
+			return 2
+		}
+		fmt.Fprintf(os.Stderr, "%s%d\n", childPIDPrefix, child.Process.Pid)
+		return credential(`{"token":"tok-123"}`)
 	case "resolve-sleeping-child", "resolve-interactive-sleeping-child":
 		// Stands in for connect, or for open in the interactive mode: runs a plugin
 		// that starts a child and never answers, so a test can end this process and
@@ -453,6 +462,23 @@ func TestResolveCredentialCancelEndsAnInteractivePlugin(t *testing.T) {
 	if !goneWithin(pid, 3*time.Second) {
 		endProcess(pid)
 		t.Errorf("the interactive plugin %d survived the cancel", pid)
+	}
+}
+
+// A plugin that exits after handing its stdout to a process it started is a
+// successful run: exec reports the still-open pipe once WaitDelay runs out, with
+// the credential already read.
+func TestResolveCredentialAcceptsACredentialWhenAChildKeepsStdoutOpen(t *testing.T) {
+	target := fakeTarget("child-holds-stdout", false)
+	var stderr bytes.Buffer
+
+	err := ResolveCredential(context.Background(), target, CredentialOptions{Stderr: &stderr, Timeout: 10 * time.Second})
+	defer endProcess(reportedPID(t, stderr.String(), childPIDPrefix))
+	if err != nil {
+		t.Fatalf("ResolveCredential = %v, want the credential although the child holds stdout", err)
+	}
+	if target.Config.BearerToken != "tok-123" {
+		t.Errorf("BearerToken = %q, want tok-123", target.Config.BearerToken)
 	}
 }
 
