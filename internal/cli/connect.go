@@ -138,10 +138,14 @@ func (o *connectOptions) credentialError(err error, contextName string, alias ss
 	msg := "Sign in from a terminal first, then reconnect:\n  " + kubectlWorkspaceCommand("open",
 		o.kubeconfig, contextName, alias.Cluster, alias.Workspace, "--namespace", alias.Namespace)
 	if signIn != nil {
+		// --write replaces the entry, so the command carries the flags connect knows of.
+		args := []string{"--write", "--credential-timeout", (slowPluginFactor * o.credentialTimeout).String()}
+		if o.caFile != "" {
+			args = append(args, "--ca-file", o.caFile)
+		}
 		msg += "\nIf the plugin is slow rather than waiting for a sign-in, add --credential-timeout to your " +
 			"ssh-config --write command, for example:\n  " +
-			kubectlWorkspaceCommand("ssh-config", o.kubeconfig, contextName, alias.Cluster,
-				"--write", "--credential-timeout", (slowPluginFactor*o.credentialTimeout).String())
+			kubectlWorkspaceCommand("ssh-config", o.kubeconfig, contextName, alias.Cluster, args...)
 	}
 	return fmt.Errorf("%w\n%s", err, msg)
 }

@@ -165,6 +165,22 @@ func TestConnectFailsFastWhenTheCredentialNeedsASignIn(t *testing.T) {
 	}
 }
 
+// ssh-config --write replaces the whole entry, so the ready-made command in the
+// hint carries the CA file the entry had, or following it would drop it.
+func TestConnectCarriesTheCAFileInTheSlowPluginHint(t *testing.T) {
+	kubeconfig := pluginKubeconfig(t, "sleep")
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, testutil.NewTLSEchoServer(t).CAPEM(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := run(t, "connect", "--stdio", "--kubeconfig", kubeconfig, "--context", "dev", "--ca-file", caFile,
+		"--credential-timeout", "300ms", alias)
+	want := "ssh-config --write --credential-timeout 900ms --ca-file " + caFile
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("error %v\nwant the hint to carry the CA file: %q", err, want)
+	}
+}
+
 func TestConnectAttachesTheSignInHintToAFailingPlugin(t *testing.T) {
 	kubeconfig := pluginKubeconfig(t, "fail")
 

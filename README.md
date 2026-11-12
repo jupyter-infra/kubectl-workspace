@@ -130,7 +130,8 @@ kubectl workspace open <workspace>
 `open` runs the sign-in from the terminal, checks the connection with the operator
 and launches VS Code. A plugin that exits with an error gets the same hint; one that
 is not installed gets the kubeconfig's install hint. A plugin that is merely slow
-needs a longer deadline in the entry:
+needs a longer deadline in the entry. `--write` replaces the cluster's entry, so repeat
+the other flags of your original command, such as `--ca-file` or `--user`:
 
 ```
 kubectl workspace ssh-config --write --context <context> --credential-timeout 15s
