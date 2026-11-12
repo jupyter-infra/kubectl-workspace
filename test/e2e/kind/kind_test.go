@@ -184,7 +184,22 @@ func startRig() (*rig, error) {
 		return r, err
 	}
 	r.alias = workspace + "." + namespace + "." + r.context + ".jk8s"
+	if err := r.waitReachable(); err != nil {
+		return r, fmt.Errorf("the workspace is not reachable through the ingress: %v", err)
+	}
 	return r, nil
+}
+
+// waitReachable polls a session through the entry until the ingress routes it. The
+// Available condition is the operator's view; Traefik learns of the pod's endpoint a
+// moment later and answers 503 until then.
+func (r *rig) waitReachable() error {
+	args := append([]string{"-F", r.sshConfig}, r.sshOptions()...)
+	args = append(args, r.alias, "true")
+	return harness.Poll(60*time.Second, 2*time.Second, func() (bool, string) {
+		out, err := harness.Command("ssh", args...)
+		return err == nil, strings.TrimSpace(out)
+	})
 }
 
 // cleanup removes the fixtures and the rig's files; with E2E_KIND_KEEP set both stay,
