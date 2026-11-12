@@ -94,6 +94,10 @@ func Dial(ctx context.Context, u *url.URL, opts DialOptions) (*websocket.Conn, e
 	dialer := websocket.Dialer{
 		Proxy:            proxyFromEnvironment,
 		HandshakeTimeout: handshakeTimeout,
+		// A client writes a message larger than its buffer as several frames, so the
+		// buffer matches the chunk and one stdin read is one frame.
+		ReadBufferSize:  chunkSize,
+		WriteBufferSize: chunkSize,
 		NetDialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
 			conn, err := (&net.Dialer{}).DialContext(dialCtx, network, addr)
 			if err != nil {
@@ -227,10 +231,12 @@ func upstream(ws *websocket.Conn, in io.Reader) error {
 	}
 }
 
-// downstream copies binary frames to out until the WebSocket ends.
+// downstream copies binary frames to out until the WebSocket ends, through one
+// buffer: ReadMessage would allocate and regrow a slice for every frame.
 func downstream(ws *websocket.Conn, out io.Writer) error {
+	buf := make([]byte, chunkSize)
 	for {
-		messageType, data, err := ws.ReadMessage()
+		messageType, frame, err := ws.NextReader()
 		if err != nil {
 			return err
 		}
@@ -238,8 +244,26 @@ func downstream(ws *websocket.Conn, out io.Writer) error {
 		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		if _, err := out.Write(data); err != nil {
-			return fmt.Errorf("failed to write to stdout: %w", err)
+		if err := copyFrame(out, frame, buf); err != nil {
+			return err
+		}
+	}
+}
+
+// copyFrame writes one frame to out as it arrives.
+func copyFrame(out io.Writer, frame io.Reader, buf []byte) error {
+	for {
+		n, err := frame.Read(buf)
+		if n > 0 {
+			if _, werr := out.Write(buf[:n]); werr != nil {
+				return fmt.Errorf("failed to write to stdout: %w", werr)
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
 		}
 	}
 }
