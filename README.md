@@ -129,6 +129,9 @@ the command to run instead:
 kubectl workspace open <workspace>
 ```
 
+kubelogin would also open a browser tab on every attempt, so `connect` runs it with
+`--skip-open-browser` and the sign-in URL goes to stderr instead.
+
 `open` runs the sign-in from the terminal, checks the connection with the operator
 and launches VS Code. A plugin that exits with an error gets the same hint; one that
 is not installed gets the kubeconfig's install hint. A plugin that is merely slow

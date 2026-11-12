@@ -26,6 +26,8 @@ import (
 	clientauthv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
 	"k8s.io/client-go/rest"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+
+	"github.com/jupyter-infra/kubectl-workspace/internal/testutil"
 )
 
 // fakePluginEnv selects the fake plugin's behavior when the test binary is
@@ -50,6 +52,7 @@ func TestMain(m *testing.M) {
 // fakePlugin echoes KUBERNETES_EXEC_INFO to stderr, then behaves as mode says.
 func fakePlugin(mode string) int {
 	fmt.Fprintln(os.Stderr, "exec-info:"+os.Getenv(execInfoEnv))
+	fmt.Fprintln(os.Stderr, "args:"+strings.Join(os.Args[1:], " "))
 	credential := func(status string) int {
 		fmt.Printf(`{"apiVersion":%q,"kind":"ExecCredential","status":%s}`, testAPIVersion, status)
 		return 0
@@ -134,6 +137,85 @@ func fakeTarget(mode string, provideClusterInfo bool) *Target {
 				InteractiveMode:    clientcmdapi.IfAvailableExecInteractiveMode,
 			},
 		},
+	}
+}
+
+// argsSeen returns the arguments the fake plugin echoed.
+func argsSeen(t *testing.T, stderr string) string {
+	t.Helper()
+	for _, line := range strings.Split(stderr, "\n") {
+		if raw, ok := strings.CutPrefix(line, "args:"); ok {
+			return raw
+		}
+	}
+	t.Fatalf("the plugin did not report its arguments; stderr:\n%s", stderr)
+	return ""
+}
+
+func TestIsKubeloginRecognizesItsThreeNames(t *testing.T) {
+	tests := []struct {
+		command string
+		args    []string
+		want    bool
+	}{
+		{command: "kubectl", args: []string{"oidc-login", "get-token"}, want: true},
+		{command: "/usr/local/bin/kubectl", args: []string{"oidc-login", "get-token"}, want: true},
+		{command: "kubectl.EXE", args: []string{"oidc-login", "get-token"}, want: true},
+		{command: "kubectl-oidc_login", args: []string{"get-token"}, want: true},
+		{command: "/home/me/.krew/bin/kubectl-oidc_login", want: true},
+		{command: "kubelogin", args: []string{"get-token"}, want: true},
+		{command: "kubectl", args: []string{"get", "pods"}, want: false},
+		{command: "kubectl", want: false},
+		{command: "aws", args: []string{"eks", "get-token"}, want: false},
+		{command: "/opt/bin/my-kubelogin-wrapper", want: false},
+	}
+	for _, tt := range tests {
+		if got := isKubelogin(tt.command, tt.args); got != tt.want {
+			t.Errorf("isKubelogin(%q, %q) = %v, want %v", tt.command, tt.args, got, tt.want)
+		}
+	}
+}
+
+// kubelogin ignores the interactive field of KUBERNETES_EXEC_INFO and opens a
+// browser unless told not to, so a run without a terminal tells it.
+func TestResolveCredentialTellsKubeloginNotToOpenABrowserWithoutATerminal(t *testing.T) {
+	kubelogin := filepath.Join(t.TempDir(), "kubelogin")
+	testutil.Symlink(t, os.Args[0], kubelogin)
+	tests := []struct {
+		name        string
+		interactive bool
+		wantFlag    bool
+	}{
+		{name: "connect, no terminal", wantFlag: true},
+		{name: "open, with a terminal", interactive: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pretendTerminal(t, tt.interactive)
+			target := fakeTarget("token", false)
+			target.Config.ExecProvider.Command = kubelogin
+			target.Config.ExecProvider.Args = []string{"get-token"}
+			var stderr bytes.Buffer
+			opts := CredentialOptions{Interactive: tt.interactive, Stdin: strings.NewReader(""), Stderr: &stderr}
+			if err := ResolveCredential(context.Background(), target, opts); err != nil {
+				t.Fatal(err)
+			}
+			args := argsSeen(t, stderr.String())
+			if got := strings.Contains(args, "--skip-open-browser"); got != tt.wantFlag {
+				t.Errorf("plugin received %q, --skip-open-browser present = %v, want %v", args, got, tt.wantFlag)
+			}
+			if !strings.HasPrefix(args, "get-token") {
+				t.Errorf("plugin received %q, want the kubeconfig's own arguments first", args)
+			}
+		})
+	}
+	// Any other plugin keeps its arguments as the kubeconfig wrote them.
+	var stderr bytes.Buffer
+	if err := ResolveCredential(context.Background(), fakeTarget("token", false), CredentialOptions{Stderr: &stderr}); err != nil {
+		t.Fatal(err)
+	}
+	if args := argsSeen(t, stderr.String()); args != "" {
+		t.Errorf("a plugin that is not kubelogin received %q, want no added arguments", args)
 	}
 }
 

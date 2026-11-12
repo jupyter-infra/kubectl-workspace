@@ -54,8 +54,9 @@ the operator's dependency graph out of this binary.
 - The credential plugin never sees the tunnel. client-go would run the kubeconfig's
   exec plugin on the first request, with no deadline and with the process's stdin,
   which under `ssh` is the SSH stream. `kube.ResolveCredential` runs it itself: no
-  stdin, `interactive: false` in `KUBERNETES_EXEC_INFO`, and the plugin ends with the
-  command that ran it: SIGTERM at the deadline or on a signal on Unix, a job object
+  stdin, `interactive: false` in `KUBERNETES_EXEC_INFO`, `--skip-open-browser` added for
+  kubelogin, which ignores that field, and the plugin ends with the command that ran
+  it: SIGTERM at the deadline or on a signal on Unix, a job object
   on Windows, which also ends it when `connect` itself is ended. What the plugin
   started ends with it only when it ran without a terminal, through its process
   group on Unix and the job on Windows, so the browser kubelogin opens for an

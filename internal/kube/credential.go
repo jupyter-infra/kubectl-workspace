@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -90,7 +91,12 @@ func ResolveCredential(ctx context.Context, target *Target, opts CredentialOptio
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(ctx, provider.Command, provider.Args...)
+	args := provider.Args
+	if !interactive && isKubelogin(provider.Command, provider.Args) {
+		// kubelogin ignores the interactive field and would open a browser.
+		args = append(append([]string(nil), args...), "--skip-open-browser")
+	}
+	cmd := exec.CommandContext(ctx, provider.Command, args...)
 	cmd.Env = os.Environ()
 	for _, v := range provider.Env {
 		cmd.Env = append(cmd.Env, v.Name+"="+v.Value)
@@ -131,6 +137,26 @@ func ResolveCredential(ctx context.Context, target *Target, opts CredentialOptio
 	}
 	apply(target.Config, status)
 	return nil
+}
+
+// The names kubelogin runs by: kubectl's oidc-login plugin, the krew binary, its own binary.
+const (
+	kubectlCommand    = "kubectl"
+	kubeloginPlugin   = "oidc-login"
+	kubeloginKrewName = "kubectl-oidc_login"
+	kubeloginName     = "kubelogin"
+)
+
+// isKubelogin recognizes kubelogin under any of its names.
+func isKubelogin(command string, args []string) bool {
+	name := strings.TrimSuffix(strings.ToLower(filepath.Base(command)), ".exe")
+	switch name {
+	case kubeloginKrewName, kubeloginName:
+		return true
+	case kubectlCommand:
+		return len(args) > 0 && args[0] == kubeloginPlugin
+	}
+	return false
 }
 
 // interactiveFor applies the kubeconfig's interactiveMode as client-go does; a
