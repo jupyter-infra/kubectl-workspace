@@ -179,7 +179,11 @@ func TestIsKubeloginRecognizesItsThreeNames(t *testing.T) {
 // kubelogin ignores the interactive field of KUBERNETES_EXEC_INFO and opens a
 // browser unless told not to, so a run without a terminal tells it.
 func TestResolveCredentialTellsKubeloginNotToOpenABrowserWithoutATerminal(t *testing.T) {
-	kubelogin := filepath.Join(t.TempDir(), "kubelogin")
+	name := "kubelogin"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	kubelogin := filepath.Join(t.TempDir(), name)
 	testutil.Symlink(t, os.Args[0], kubelogin)
 	tests := []struct {
 		name        string
