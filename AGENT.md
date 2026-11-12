@@ -81,7 +81,10 @@ the operator's dependency graph out of this binary.
   second cluster lands before it, not inside its markers.
 - The entry is one ssh_config line per option. Arguments are quoted for the shell,
   `%` is doubled because OpenSSH expands percent tokens on the ProxyCommand line, and
-  the `User` value is one token, because OpenSSH aborts on a second one.
+  the `User` value is one token, because OpenSSH aborts on a second one. On Windows
+  the ssh client splits the ProxyCommand line itself and a pasted hint goes through
+  cmd.exe or PowerShell, so a Windows entry refuses the characters that quoting
+  cannot carry there instead of escaping them.
 
 ## Repository Layout
 

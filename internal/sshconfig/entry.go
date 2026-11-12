@@ -48,7 +48,12 @@ func (e Entry) HostPattern() string {
 // second token and expands % in it.
 var userPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
-// Validate rejects values that cannot sit on one ssh_config line.
+// windowsUnsafe lists what WindowsQuote cannot carry: a double quote ends the
+// argument, and cmd.exe or PowerShell act on the others in a pasted hint.
+const windowsUnsafe = "\"&|<>^%"
+
+// Validate rejects values that cannot sit on one ssh_config line and, for a Windows
+// entry, the characters its quoting cannot carry.
 func (e Entry) Validate() error {
 	fields := []struct{ name, value string }{
 		{"cluster name", e.Cluster}, {"context name", e.Context}, {"kubeconfig path", e.Kubeconfig},
@@ -57,6 +62,10 @@ func (e Entry) Validate() error {
 	for _, field := range fields {
 		if strings.ContainsAny(field.value, "\r\n") {
 			return fmt.Errorf("the %s %q contains a line break", field.name, field.value)
+		}
+		if i := strings.IndexAny(field.value, windowsUnsafe); e.Windows && i >= 0 {
+			return fmt.Errorf("the %s %q contains %q, which the ProxyCommand cannot carry on Windows; "+
+				"rename it or use a simpler path", field.name, field.value, string(field.value[i]))
 		}
 	}
 	if !userPattern.MatchString(e.User) {

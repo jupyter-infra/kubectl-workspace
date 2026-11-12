@@ -143,6 +143,31 @@ func TestWindowsQuote(t *testing.T) {
 	}
 }
 
+// On Windows the ssh client parses the ProxyCommand line itself and a pasted hint
+// goes through cmd.exe or PowerShell, so a value only the shell quoting could carry
+// is refused there and accepted on Unix.
+func TestValidateRejectsWhatTheWindowsQuotingCannotCarry(t *testing.T) {
+	for _, value := range []string{`C:\me"\config`, "dev&echo", "dev|more", "a<b", "a>b", "a^b", "%PATH%"} {
+		entry := testEntry()
+		entry.Windows = true
+		entry.Kubeconfig = value
+		if err := entry.Validate(); err == nil || !strings.Contains(err.Error(), "Windows") {
+			t.Errorf("Validate(kubeconfig %q on Windows) = %v, want a Windows quoting error", value, err)
+		}
+		entry.Windows = false
+		if err := entry.Validate(); err != nil {
+			t.Errorf("Validate(kubeconfig %q on Unix) = %v, want nil", value, err)
+		}
+	}
+	entry := testEntry()
+	entry.Windows = true
+	entry.Context = "arn:aws:eks:us-west-2:123456789012:cluster/dev"
+	entry.Kubeconfig = `C:\Users\me\.kube\config`
+	if err := entry.Validate(); err != nil {
+		t.Errorf("Validate(EKS context and a Windows path) = %v, want nil", err)
+	}
+}
+
 func TestValidateRejectsLineBreaks(t *testing.T) {
 	entry := testEntry()
 	entry.Context = "dev\n  ProxyCommand evil"
