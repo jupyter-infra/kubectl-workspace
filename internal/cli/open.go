@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os/exec"
 	"runtime"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -30,24 +29,17 @@ type openOptions struct {
 	editor        string
 }
 
-// editors maps each --editor value to its display name; a fork of VS Code that
-// ships Remote-SSH opens VS Code's link under its own scheme.
-var editors = map[string]string{
-	defaultEditor: "VS Code",
-	editorCursor:  "Cursor",
-}
-
-// editorFor resolves an --editor value to the editor's display name.
+// editorFor resolves an --editor value to the editor's display name. Each value
+// is also the editor's URL scheme: a fork of VS Code that ships Remote-SSH opens VS
+// Code's link under its own scheme.
 func editorFor(value string) (string, error) {
-	if name, ok := editors[value]; ok {
-		return name, nil
+	switch value {
+	case editorVSCode:
+		return "VS Code", nil
+	case editorCursor:
+		return "Cursor", nil
 	}
-	values := make([]string, 0, len(editors))
-	for v := range editors {
-		values = append(values, v)
-	}
-	sort.Strings(values)
-	return "", fmt.Errorf("unknown --editor %q, supported: %s", value, strings.Join(values, ", "))
+	return "", fmt.Errorf("unknown --editor %q, supported: %s, %s", value, editorVSCode, editorCursor)
 }
 
 func newOpenCommand(root *rootOptions) *cobra.Command {
@@ -70,7 +62,8 @@ editor's connection timeout.`,
 	cmd.Flags().StringVar(&o.remotePath, "remote-path", defaultRemotePath, "folder to open in the workspace")
 	cmd.Flags().StringVar(&o.sshConfigFile, "ssh-config-file", "", sshConfigFileHelp)
 	cmd.Flags().BoolVar(&o.printOnly, "print-only", false, "print the link and the ssh command instead of launching")
-	cmd.Flags().StringVar(&o.editor, "editor", defaultEditor, "editor to open the workspace in: vscode or cursor")
+	cmd.Flags().StringVar(&o.editor, "editor", defaultEditor,
+		"editor to open the workspace in: "+editorVSCode+" or "+editorCursor)
 	return cmd
 }
 
@@ -82,7 +75,7 @@ func (o *openOptions) run(ctx context.Context, workspace string) error {
 	if err != nil {
 		return err
 	}
-	target, err := kube.Load(o.kubeconfig, o.context, o.userAgent)
+	target, err := o.target()
 	if err != nil {
 		return err
 	}

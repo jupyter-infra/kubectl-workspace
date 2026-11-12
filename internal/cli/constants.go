@@ -40,6 +40,7 @@ const defaultRemotePath = "/home/jovyan"
 
 // The --editor values, each also the editor's URL scheme.
 const (
-	defaultEditor = "vscode"
+	editorVSCode  = "vscode"
 	editorCursor  = "cursor"
+	defaultEditor = editorVSCode
 )

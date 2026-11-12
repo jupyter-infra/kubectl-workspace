@@ -51,7 +51,7 @@ func TestOpenBuildsTheLinkForTheChosenEditor(t *testing.T) {
 		}
 	}
 	_, err := run(t, "open", "--kubeconfig", kubeconfig, "--print-only", "--editor", "emacs", "ws1")
-	if err == nil || !strings.Contains(err.Error(), `unknown --editor "emacs", supported: cursor, vscode`) {
+	if err == nil || !strings.Contains(err.Error(), `unknown --editor "emacs", supported: vscode, cursor`) {
 		t.Errorf("error = %v, want the supported editors listed", err)
 	}
 }

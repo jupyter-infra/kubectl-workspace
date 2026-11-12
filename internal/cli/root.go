@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jupyter-infra/kubectl-workspace/internal/kube"
 	"github.com/jupyter-infra/kubectl-workspace/internal/sshconfig"
 )
 
@@ -32,19 +33,29 @@ type Streams struct {
 
 // rootOptions is the state every command shares.
 type rootOptions struct {
-	kubeconfig string
-	context    string
-	verbose    bool
-	streams    Streams
-	userAgent  string
+	kubeconfig  string
+	contextName string
+	verbose     bool
+	streams     Streams
+	userAgent   string
 }
 
-// logf writes progress to stderr when --verbose is set. Nothing but the SSH byte
-// stream may reach stdout in connect, so every diagnostic goes to stderr.
+// warnf writes one line prefixed with the program name to w, which is always
+// stderr: nothing but the SSH byte stream may reach stdout in connect.
+func warnf(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, programName+": "+format+"\n", args...)
+}
+
+// logf writes progress to stderr when --verbose is set.
 func (o *rootOptions) logf(format string, args ...any) {
 	if o.verbose {
-		_, _ = fmt.Fprintf(o.streams.Err, programName+": "+format+"\n", args...)
+		warnf(o.streams.Err, format, args...)
 	}
+}
+
+// target loads the kubeconfig context the global flags select.
+func (o *rootOptions) target() (*kube.Target, error) {
+	return kube.Load(o.kubeconfig, o.contextName, o.userAgent)
 }
 
 // Main runs the plugin and returns the process exit code.
@@ -56,7 +67,7 @@ func Main(args []string, streams Streams, version string) int {
 	root := newRootCommand(streams, version)
 	root.SetArgs(args)
 	if err := root.ExecuteContext(ctx); err != nil {
-		_, _ = fmt.Fprintf(streams.Err, "%s: %v\n", programName, err)
+		warnf(streams.Err, "%v", err)
 		return 1
 	}
 	return 0
@@ -98,7 +109,7 @@ reach any workspace in that cluster, and "open" launches VS Code on one.`,
 
 	flags := root.PersistentFlags()
 	flags.StringVar(&o.kubeconfig, "kubeconfig", "", "path to the kubeconfig file (default $KUBECONFIG or ~/.kube/config)")
-	flags.StringVar(&o.context, "context", "", "kubeconfig context to use (default the current context)")
+	flags.StringVar(&o.contextName, "context", "", "kubeconfig context to use (default the current context)")
 	flags.BoolVarP(&o.verbose, "verbose", "v", false, "write progress to stderr")
 
 	root.AddCommand(newConnectCommand(o), newSSHConfigCommand(o), newOpenCommand(o))

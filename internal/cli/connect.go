@@ -42,6 +42,9 @@ terminal: a sign-in cannot happen inside an SSH connection, so when the
 credential has expired connect fails fast and names the command to run instead.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if stdio, _ := cmd.Flags().GetBool("stdio"); !stdio {
+				return errors.New("connect runs only with --stdio")
+			}
 			return o.run(cmd.Context(), args[0])
 		},
 	}
@@ -68,7 +71,7 @@ func (o *connectOptions) run(ctx context.Context, host string) error {
 
 	err = o.session(ctx, alias)
 	if reason, ok := tunnel.CloseReason(err); ok {
-		_, _ = fmt.Fprintf(o.streams.Err, "%s: the workspace closed the connection: %s\n", programName, reason)
+		warnf(o.streams.Err, "the workspace closed the connection: %s", reason)
 		return nil
 	}
 	// A signal from ssh is how a finished session ends, not a failure, whichever
@@ -98,16 +101,18 @@ func (o *connectOptions) session(ctx context.Context, alias sshconfig.Alias) err
 	return tunnel.Relay(ctx, ws, o.streams.In, o.streams.Out)
 }
 
+// connection comes from the hidden --url, or from the operator once the kubeconfig
+// credential is resolved.
 func (o *connectOptions) connection(ctx context.Context, alias sshconfig.Alias) (*kube.Connection, error) {
 	if o.directURL != "" {
 		conn, err := kube.ParseConnectionURL(o.directURL)
 		if err != nil {
-			return nil, fmt.Errorf("invalid --url: %w", err)
+			return nil, fmt.Errorf("--url: %w", err)
 		}
 		return conn, nil
 	}
 
-	target, err := kube.Load(o.kubeconfig, o.context, o.userAgent)
+	target, err := o.target()
 	if err != nil {
 		return nil, err
 	}
