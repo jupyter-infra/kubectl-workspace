@@ -166,6 +166,10 @@ func TestValidateRejectsWhatTheWindowsQuotingCannotCarry(t *testing.T) {
 	}
 	entry := testEntry()
 	entry.Windows = true
+	entry.Context = `dev"team`
+	if err := entry.Validate(); err == nil || !strings.Contains(err.Error(), `context name "dev\"team" contains "\""`) {
+		t.Errorf("Validate(context with a quote on Windows) = %v, want the field and the character named", err)
+	}
 	entry.Context = "arn:aws:eks:us-west-2:123456789012:cluster/dev"
 	entry.Kubeconfig = `C:\Users\me\.kube\config`
 	if err := entry.Validate(); err != nil {
