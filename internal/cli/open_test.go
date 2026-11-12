@@ -23,7 +23,7 @@ func TestOpenPrintOnlyPrintsTheLinkAndTheSSHCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "vscode://vscode-remote/ssh-remote+ws1.team-a.dev.jk8s/home/jovyan?windowId=_blank\nssh ws1.team-a.dev.jk8s\n"
+	want := "vscode://vscode-remote/ssh-remote+" + alias + "/home/jovyan?windowId=_blank\nssh " + alias + "\n"
 	if stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
@@ -45,7 +45,7 @@ func TestOpenBuildsTheLinkForTheChosenEditor(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := editor + "://vscode-remote/ssh-remote+ws1.team-a.dev.jk8s/home/jovyan?windowId=_blank\n"
+		want := editor + "://vscode-remote/ssh-remote+" + alias + "/home/jovyan?windowId=_blank\n"
 		if !strings.HasPrefix(stdout, want) {
 			t.Errorf("--editor %s: stdout = %q, want it to start with %q", editor, stdout, want)
 		}
@@ -112,7 +112,7 @@ func TestOpenFailsWithTheSetupCommandWhenTheEntryIsMissing(t *testing.T) {
 func installedEntry(t *testing.T) string {
 	t.Helper()
 	configFile := filepath.Join(t.TempDir(), "config")
-	entry := sshconfig.Entry{Cluster: "dev", Context: "dev", Command: "/opt/kw", User: "jovyan"}
+	entry := sshconfig.Entry{Cluster: "dev", Context: "dev", Command: kwCommand, User: "jovyan"}
 	if err := sshconfig.Install(configFile, entry); err != nil {
 		t.Fatal(err)
 	}
@@ -141,18 +141,18 @@ func TestOpenChecksTheConnectionThenLaunchesTheEditor(t *testing.T) {
 	}{
 		{
 			name: "VS Code by default", wantName: "Opening VS Code on",
-			wantLink: "vscode://vscode-remote/ssh-remote+ws1.team-a.dev.jk8s/home/jovyan?windowId=_blank",
+			wantLink: "vscode://vscode-remote/ssh-remote+" + alias + "/home/jovyan?windowId=_blank",
 		},
 		{
 			name: "Cursor when asked", args: []string{"--editor", "cursor"}, wantName: "Opening Cursor on",
-			wantLink: "cursor://vscode-remote/ssh-remote+ws1.team-a.dev.jk8s/home/jovyan?windowId=_blank",
+			wantLink: "cursor://vscode-remote/ssh-remote+" + alias + "/home/jovyan?windowId=_blank",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			op := testutil.NewFakeOperator(t, http.StatusCreated,
 				testutil.ConnectionBody("wss://jk8s.example.com"+sshPath+"?token=abc"))
-			kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
+			kubeconfig := operatorKubeconfig(t, op)
 			launched := recordLaunches(t)
 
 			args := append([]string{"open", "--kubeconfig", kubeconfig, "--ssh-config-file", installedEntry(t)}, tt.args...)
@@ -166,7 +166,7 @@ func TestOpenChecksTheConnectionThenLaunchesTheEditor(t *testing.T) {
 			if len(*launched) != 1 || (*launched)[0] != tt.wantLink {
 				t.Errorf("launched %q, want %q", *launched, tt.wantLink)
 			}
-			for _, want := range []string{tt.wantName, "ssh ws1.team-a.dev.jk8s"} {
+			for _, want := range []string{tt.wantName, "ssh " + alias} {
 				if !strings.Contains(stdout, want) {
 					t.Errorf("stdout = %q, want it to mention %q", stdout, want)
 				}
@@ -178,7 +178,7 @@ func TestOpenChecksTheConnectionThenLaunchesTheEditor(t *testing.T) {
 func TestOpenDoesNotLaunchWhenTheOperatorRefuses(t *testing.T) {
 	op := testutil.NewFakeOperator(t, http.StatusBadRequest,
 		testutil.StatusBody(400, "workspace is not available. Check workspace status for details"))
-	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
+	kubeconfig := operatorKubeconfig(t, op)
 	launched := recordLaunches(t)
 
 	_, err := run(t, "open", "--kubeconfig", kubeconfig, "--ssh-config-file", installedEntry(t), "ws1")

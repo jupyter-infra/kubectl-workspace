@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -37,13 +36,9 @@ func TestConnectRelaysThroughTheDirectURL(t *testing.T) {
 
 func TestConnectUsesTheOperatorsTokenInAHeaderAndNeverLogsIt(t *testing.T) {
 	echo := testutil.NewTLSEchoServer(t)
-	caFile := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(caFile, echo.CAPEM(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	op := testutil.NewFakeOperator(t, http.StatusCreated,
-		testutil.ConnectionBody(echo.URL(sshPath).String()+"?token=abc.def"))
-	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
+	caFile := writeCAFile(t, echo.CAPEM())
+	op := grantingOperator(t, echo)
+	kubeconfig := operatorKubeconfig(t, op)
 	r := startConnect(t, "-v", "connect", "--stdio", "--kubeconfig", kubeconfig, "--ca-file", caFile, alias)
 
 	if got := r.echo(t, "hello"); got != "hello" {
@@ -61,13 +56,13 @@ func TestConnectUsesTheOperatorsTokenInAHeaderAndNeverLogsIt(t *testing.T) {
 		t.Errorf("operator saw workspace %q", req.Body.Spec.WorkspaceName)
 	}
 	upgrade := echo.LastHandshake(t)
-	if upgrade.Authorization != "Bearer abc.def" {
+	if upgrade.Authorization != "Bearer "+grantedToken {
 		t.Errorf("WebSocket Authorization = %q, want the operator's token", upgrade.Authorization)
 	}
 	if upgrade.RawQuery != "" {
 		t.Errorf("WebSocket query = %q, want the token removed from the URL", upgrade.RawQuery)
 	}
-	if strings.Contains(r.stderr.String(), "abc.def") {
+	if strings.Contains(r.stderr.String(), grantedToken) {
 		t.Errorf("stderr leaks the token: %q", r.stderr.String())
 	}
 	if !strings.Contains(r.stderr.String(), "connection granted") {
@@ -106,7 +101,7 @@ func TestConnectReportsTheWorkspacesCloseReason(t *testing.T) {
 
 func TestConnectReportsTheOperatorsRefusal(t *testing.T) {
 	op := testutil.NewFakeOperator(t, http.StatusForbidden, testutil.StatusBody(403, "user is not the owner"))
-	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
+	kubeconfig := operatorKubeconfig(t, op)
 
 	_, err := run(t, "connect", "--stdio", "--kubeconfig", kubeconfig, alias)
 	if err == nil || !strings.Contains(err.Error(), "user is not the owner") {
@@ -115,9 +110,12 @@ func TestConnectReportsTheOperatorsRefusal(t *testing.T) {
 }
 
 func TestConnectRequiresTheStdioFlag(t *testing.T) {
-	_, err := run(t, "connect", alias)
-	if err == nil || !strings.Contains(err.Error(), "stdio") {
-		t.Errorf("error = %v, want the missing --stdio flag", err)
+	kubeconfig := staticKubeconfig(t)
+	for _, args := range [][]string{{"connect", alias}, {"connect", "--stdio=false", alias}} {
+		_, err := run(t, append(args, "--kubeconfig", kubeconfig)...)
+		if err == nil || !strings.Contains(err.Error(), "stdio") {
+			t.Errorf("%q: error = %v, want --stdio required", args, err)
+		}
 	}
 }
 
@@ -125,9 +123,8 @@ func TestConnectRequiresTheStdioFlag(t *testing.T) {
 // before anything is dialed; the flag is the opt-in for a local cluster.
 func TestConnectRefusesAPlaintextConnectionURLUnlessAllowed(t *testing.T) {
 	echo := testutil.NewEchoServer(t)
-	op := testutil.NewFakeOperator(t, http.StatusCreated,
-		testutil.ConnectionBody(echo.URL(sshPath).String()+"?token=abc.def"))
-	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
+	op := grantingOperator(t, echo)
+	kubeconfig := operatorKubeconfig(t, op)
 
 	_, err := run(t, "connect", "--stdio", "--kubeconfig", kubeconfig, alias)
 	if err == nil || !strings.Contains(err.Error(), "without TLS") {
@@ -144,7 +141,7 @@ func TestConnectRefusesAPlaintextConnectionURLUnlessAllowed(t *testing.T) {
 	if err := r.finish(t); err != nil {
 		t.Errorf("connect returned %v", err)
 	}
-	if upgrade := echo.LastHandshake(t); upgrade.Authorization != "Bearer abc.def" {
+	if upgrade := echo.LastHandshake(t); upgrade.Authorization != "Bearer "+grantedToken {
 		t.Errorf("WebSocket Authorization = %q, want the operator's token", upgrade.Authorization)
 	}
 }
@@ -159,33 +156,50 @@ func TestConnectRejectsAHostThatIsNotAnAlias(t *testing.T) {
 func TestConnectFailsFastWhenTheCredentialNeedsASignIn(t *testing.T) {
 	// A plugin that never answers stands in for one waiting for the browser.
 	kubeconfig := pluginKubeconfig(t, "sleep")
+	caFile := writeCAFile(t, testutil.NewTLSEchoServer(t).CAPEM())
+	openHint := "kubectl workspace open ws1 --namespace team-a --kubeconfig " + kubeconfig + " --context "
+	slowHint := "kubectl workspace ssh-config --write --credential-timeout 900ms "
 	tests := []struct {
-		name     string
-		context  string
-		wantHint string
+		name         string
+		args         []string
+		wantOpenHint string
+		wantSlowHint string
 	}{
 		{
-			name:     "context usable as the cluster name",
-			context:  "dev",
-			wantHint: "kubectl workspace open ws1 --namespace team-a --kubeconfig " + kubeconfig + " --context dev",
+			name:         "context usable as the cluster name",
+			args:         []string{"--context", "dev"},
+			wantOpenHint: openHint + "dev",
+			wantSlowHint: slowHint + "--kubeconfig " + kubeconfig + " --context dev",
 		},
 		{
-			name:    "EKS ARN context needs the cluster name",
-			context: testutil.ARNContext,
-			wantHint: "kubectl workspace open ws1 --namespace team-a --kubeconfig " + kubeconfig +
-				" --context " + testutil.ARNContext + " --cluster-name dev",
+			name:         "EKS ARN context needs the cluster name",
+			args:         []string{"--context", testutil.ARNContext},
+			wantOpenHint: openHint + testutil.ARNContext + " --cluster-name dev",
+			wantSlowHint: slowHint + "--kubeconfig " + kubeconfig + " --context " + testutil.ARNContext + " --cluster-name dev",
+		},
+		// --write replaces the whole entry, so the hint has to carry the entry's flags.
+		{
+			name:         "CA file carried into the hint",
+			args:         []string{"--context", "dev", "--ca-file", caFile},
+			wantOpenHint: openHint + "dev",
+			wantSlowHint: slowHint + "--ca-file " + caFile + " --kubeconfig " + kubeconfig + " --context dev",
+		},
+		{
+			name:         "plaintext opt-in carried into the hint",
+			args:         []string{"--context", "dev", "--insecure-allow-plaintext"},
+			wantOpenHint: openHint + "dev",
+			wantSlowHint: slowHint + "--insecure-allow-plaintext --kubeconfig " + kubeconfig + " --context dev",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			start := time.Now()
-			_, err := run(t, "connect", "--stdio", "--kubeconfig", kubeconfig, "--context", tt.context,
-				"--credential-timeout", "300ms", alias)
+			args := []string{"connect", "--stdio", "--kubeconfig", kubeconfig, "--credential-timeout", "300ms"}
+			_, err := run(t, append(append(args, tt.args...), alias)...)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
-			slowHint := "kubectl workspace ssh-config --write --credential-timeout 900ms --kubeconfig " + kubeconfig
-			for _, want := range []string{"browser sign-in", tt.wantHint, slowHint} {
+			for _, want := range []string{"browser sign-in", tt.wantOpenHint, tt.wantSlowHint} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error %q does not mention %q", err, want)
 				}
@@ -194,22 +208,6 @@ func TestConnectFailsFastWhenTheCredentialNeedsASignIn(t *testing.T) {
 				t.Errorf("connect took %s, want it to give up at the credential timeout", elapsed)
 			}
 		})
-	}
-}
-
-// ssh-config --write replaces the whole entry, so the ready-made command in the
-// hint carries the CA file the entry had, or following it would drop it.
-func TestConnectCarriesTheCAFileInTheSlowPluginHint(t *testing.T) {
-	kubeconfig := pluginKubeconfig(t, "sleep")
-	caFile := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(caFile, testutil.NewTLSEchoServer(t).CAPEM(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, err := run(t, "connect", "--stdio", "--kubeconfig", kubeconfig, "--context", "dev", "--ca-file", caFile,
-		"--credential-timeout", "300ms", alias)
-	want := "ssh-config --write --credential-timeout 900ms --ca-file " + caFile
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Errorf("error %v\nwant the hint to carry the CA file: %q", err, want)
 	}
 }
 
@@ -316,10 +314,7 @@ func TestConnectRejectsANonPositiveCredentialTimeout(t *testing.T) {
 
 func TestConnectTrustsTheCAFile(t *testing.T) {
 	echo := testutil.NewTLSEchoServer(t)
-	caFile := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(caFile, echo.CAPEM(), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	caFile := writeCAFile(t, echo.CAPEM())
 	r := startConnect(t, "connect", "--stdio", "--url", echo.URL("/").String(), "--ca-file", caFile, alias)
 	if got := r.echo(t, "through the private ca"); got != "through the private ca" {
 		t.Errorf("echoed %q", got)

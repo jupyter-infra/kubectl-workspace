@@ -9,6 +9,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,9 +20,10 @@ import (
 )
 
 const (
-	alias       = "ws1.team-a.dev.jk8s"
-	sshPath     = "/workspaces/team-a/ws1/ssh-ws"
-	wantAPIPath = "/apis/connection.workspace.jupyter.org/v1alpha1/namespaces/team-a/workspaceconnections"
+	alias        = "ws1.team-a.dev.jk8s"
+	sshPath      = "/workspaces/team-a/ws1/ssh-ws"
+	wantAPIPath  = "/apis/connection.workspace.jupyter.org/v1alpha1/namespaces/team-a/workspaceconnections"
+	grantedToken = "abc.def"
 )
 
 // run executes the command tree with the given arguments and no stdin.
@@ -49,9 +52,35 @@ var kwCommand = func() string {
 	return abs
 }()
 
+// staticKubeconfig writes a kubeconfig with a static token and a server nothing
+// listens on, for commands that never reach the API server.
 func staticKubeconfig(t *testing.T) string {
 	t.Helper()
 	return testutil.Kubeconfig{Server: "https://127.0.0.1:1", Namespace: "team-a"}.Write(t)
+}
+
+// operatorKubeconfig writes a kubeconfig whose cluster is the fake operator.
+func operatorKubeconfig(t *testing.T, op *testutil.FakeOperator) string {
+	t.Helper()
+	return testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
+}
+
+// grantingOperator answers every connection request with the echo server's SSH
+// URL and grantedToken.
+func grantingOperator(t *testing.T, echo *testutil.EchoServer) *testutil.FakeOperator {
+	t.Helper()
+	return testutil.NewFakeOperator(t, http.StatusCreated,
+		testutil.ConnectionBody(echo.URL(sshPath).String()+"?token="+grantedToken))
+}
+
+// writeCAFile writes the PEM bundle into a temporary file and returns its path.
+func writeCAFile(t *testing.T, pem []byte) string {
+	t.Helper()
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, pem, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return caFile
 }
 
 // connectRun is a connect command running with pipes for ssh's stdin and stdout.
@@ -70,7 +99,9 @@ func startConnect(t *testing.T, args ...string) *connectRun {
 	outReader, outWriter := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	r := &connectRun{stdin: inWriter, stdout: outReader, stderr: &bytes.Buffer{}, done: make(chan error, 1), cancel: cancel}
+	r := &connectRun{
+		stdin: inWriter, stdout: outReader, stderr: &bytes.Buffer{}, done: make(chan error, 1), cancel: cancel,
+	}
 	root := newRootCommand(Streams{In: inReader, Out: outWriter, Err: r.stderr}, "test")
 	root.SetArgs(args)
 	go func() {

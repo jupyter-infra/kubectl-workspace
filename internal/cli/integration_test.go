@@ -142,7 +142,7 @@ func TestPluginAsSubprocessCarriesTheStreamAndExitsWithTheClient(t *testing.T) {
 
 // OpenSSH ends a ProxyCommand with SIGHUP rather than by closing its stdin.
 func TestPluginExitsCleanlyOnSIGHUP(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == goosWindows {
 		t.Skip("SIGHUP is a Unix signal")
 	}
 	plugin := startConnected(t)

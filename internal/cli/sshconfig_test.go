@@ -6,7 +6,6 @@ Distributed under the terms of the MIT license
 package cli
 
 import (
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -49,7 +48,7 @@ func TestSSHConfigRendersTheEntryForTheContext(t *testing.T) {
 	}
 	want := sshconfig.Entry{
 		Cluster: "dev", Context: "dev", Kubeconfig: kubeconfig, Command: kwCommand, User: "jovyan",
-		Windows: runtime.GOOS == "windows",
+		Windows: runtime.GOOS == goosWindows,
 	}.Render()
 	if stdout != want {
 		t.Errorf("stdout =\n%s\nwant\n%s", stdout, want)
@@ -98,9 +97,10 @@ func TestSSHConfigWritesTheKubeconfigIntoTheEntry(t *testing.T) {
 	}{
 		{name: "single-file KUBECONFIG", env: kubeconfig, wantInFile: true},
 		{
-			name:       "KUBECONFIG list",
-			env:        kubeconfig + string(os.PathListSeparator) + staticKubeconfig(t),
-			wantStderr: "KUBECONFIG lists several files",
+			name: "KUBECONFIG list",
+			env:  kubeconfig + string(os.PathListSeparator) + staticKubeconfig(t),
+			wantStderr: "kubectl-workspace: KUBECONFIG lists several files; " +
+				"the entry relies on ssh running with the same KUBECONFIG\n",
 		},
 	}
 	for _, tt := range tests {
@@ -113,7 +113,7 @@ func TestSSHConfigWritesTheKubeconfigIntoTheEntry(t *testing.T) {
 			if strings.Contains(stdout, wantFlag) != tt.wantInFile {
 				t.Errorf("entry =\n%s\nwant --kubeconfig present: %v", stdout, tt.wantInFile)
 			}
-			if !strings.Contains(stderr, tt.wantStderr) {
+			if stderr != tt.wantStderr {
 				t.Errorf("stderr = %q, want %q", stderr, tt.wantStderr)
 			}
 		})
@@ -124,13 +124,9 @@ func TestSSHConfigWritesTheKubeconfigIntoTheEntry(t *testing.T) {
 // the same way, with the alias in place of %h.
 func TestInstalledEntryRunsConnect(t *testing.T) {
 	echo := testutil.NewTLSEchoServer(t)
-	caFile := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(caFile, echo.CAPEM(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	op := testutil.NewFakeOperator(t, http.StatusCreated,
-		testutil.ConnectionBody(echo.URL(sshPath).String()+"?token=abc.def"))
-	kubeconfig := testutil.Kubeconfig{Server: op.URL(), CAPEM: op.CAPEM(), Namespace: "team-a"}.Write(t)
+	caFile := writeCAFile(t, echo.CAPEM())
+	op := grantingOperator(t, echo)
+	kubeconfig := operatorKubeconfig(t, op)
 	configFile := filepath.Join(t.TempDir(), ".ssh", "config")
 	stdout, err := run(t, "ssh-config", "--write", "--kubeconfig", kubeconfig, "--context", testutil.ARNContext,
 		"--cluster-name", "dev", "--command", kwCommand, "--ssh-config-file", configFile, "--ca-file", caFile)
@@ -164,7 +160,7 @@ func TestInstalledEntryRunsConnect(t *testing.T) {
 	if err := r.finish(t); err != nil {
 		t.Errorf("connect returned %v (args %q)", err, args)
 	}
-	if upgrade := echo.LastHandshake(t); upgrade.Authorization != "Bearer abc.def" {
+	if upgrade := echo.LastHandshake(t); upgrade.Authorization != "Bearer "+grantedToken {
 		t.Errorf("WebSocket Authorization = %q", upgrade.Authorization)
 	}
 }
@@ -201,7 +197,7 @@ func shellWords(line string) []string {
 	return words
 }
 
-func TestSSHConfigWritesTheCAFilePathAbsoluteIntoTheEntry(t *testing.T) {
+func TestSSHConfigChecksTheCAFileAndWritesItsAbsolutePath(t *testing.T) {
 	echo := testutil.NewTLSEchoServer(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "ca.pem"), echo.CAPEM(), 0o600); err != nil {
@@ -247,7 +243,8 @@ func TestSSHConfigResolvesTheCommandPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "ProxyCommand " + filepath.Join(cwd, "bin", "kubectl-workspace") + " connect"; !strings.Contains(stdout, want) {
+	want := "ProxyCommand " + filepath.Join(cwd, "bin", "kubectl-workspace") + " connect"
+	if !strings.Contains(stdout, want) {
 		t.Errorf("entry =\n%s\nwant the relative path made absolute: %s", stdout, want)
 	}
 
