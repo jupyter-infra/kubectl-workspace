@@ -160,6 +160,15 @@ func TestParseConnectionURLToleratesAMissingToken(t *testing.T) {
 	}
 }
 
+func TestCreateConnectionRejectsAnAnswerWithoutAURL(t *testing.T) {
+	op := testutil.NewFakeOperator(t, http.StatusCreated, testutil.ConnectionBody(""))
+
+	_, err := CreateConnection(context.Background(), op.RestConfig("kube-token"), "team-a", "ws1")
+	if err == nil || !strings.Contains(err.Error(), "no URL") {
+		t.Errorf("error = %v, want a complaint about the missing URL", err)
+	}
+}
+
 func TestCreateConnectionRejectsAURLWithoutAToken(t *testing.T) {
 	op := testutil.NewFakeOperator(t, http.StatusCreated,
 		testutil.ConnectionBody("wss://jk8s.example.com/workspaces/team-a/ws1/ssh-ws"))

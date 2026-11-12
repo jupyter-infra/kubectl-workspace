@@ -106,6 +106,9 @@ func CreateConnection(ctx context.Context, config *rest.Config, namespace, works
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("invalid connection response: %w", err)
 	}
+	if out.Status.WorkspaceConnectionURL == "" {
+		return nil, errors.New("the connection response carries no URL")
+	}
 	conn, err := ParseConnectionURL(out.Status.WorkspaceConnectionURL)
 	if err != nil {
 		return nil, err
