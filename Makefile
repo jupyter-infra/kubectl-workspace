@@ -61,6 +61,10 @@ e2e-workspace-image: ## Build the stand-in workspace image around the published 
 test-e2e: e2e-workspace-image ## Run ssh and sftp through the plugin against the sidecar and the workspace image in containers (needs docker or finch, ssh and sftp).
 	go test -tags e2e -count=1 -timeout 15m -v ./test/e2e/
 
+.PHONY: test-e2e-native
+test-e2e-native: ## Run the system's ssh through the entry the plugin writes, against an in-process SSH server (needs ssh).
+	go test -tags e2e -count=1 -timeout 10m -v ./test/e2e/native/
+
 # The Kind rig: the operator with token signing on, the auth middleware and Traefik.
 KIND ?= kind
 E2E_KIND_CLUSTER ?= kubectl-workspace-e2e

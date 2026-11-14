@@ -6,7 +6,7 @@
 |----------|---------|---------|
 | `lint.yml` | push to main, PR, manual | golangci-lint |
 | `test.yml` | push to main, PR, manual | A `go mod tidy` drift check, the tests with the race detector on Linux, macOS and Windows, and a cross-compile of every release target |
-| `e2e.yml` | push to main, PR, manual | Two jobs: `ssh` and `sftp` through the plugin against the published sidecar and SSH server images in containers on the runner, and `ssh` through a Kind cluster with the operator, the auth middleware and Traefik, once on the oldest supported operator release and once on the latest |
+| `e2e.yml` | push to main, PR, manual | Three jobs: `ssh` and `sftp` through the plugin against the published sidecar and SSH server images in containers on the runner; the operating system's OpenSSH on Ubuntu, macOS and Windows through the entry the plugin writes, against an in-process SSH server; and `ssh` through a Kind cluster with the operator, the auth middleware and Traefik, once on the oldest supported operator release and once on the latest |
 
 ## Testing workflow changes
 

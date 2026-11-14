@@ -48,8 +48,10 @@ the operator's dependency graph out of this binary.
   kubeconfig writer and a listener that never answers.
 - `test/e2e`: the system's `ssh` and `sftp` through the plugin against the published
   sidecar and SSH server images (`e2e` build tag). `test/e2e/kind`: the plugin against
-  a Kind cluster with the operator, the auth middleware and Traefik.
-  `test/e2e/internal/harness`: what both suites share.
+  a Kind cluster with the operator, the auth middleware and Traefik. `test/e2e/native`:
+  the operating system's own OpenSSH client through the entry the plugin writes,
+  against an in-process SSH server, on Linux, macOS and Windows.
+  `test/e2e/internal/harness`: what the suites share.
 
 ## Invariants
 
@@ -111,6 +113,7 @@ the operator's dependency graph out of this binary.
   on a Mac
 - End to end on Kind: `make test-e2e-kind-full`, or `make setup-e2e-kind` once and
   `make test-e2e-kind` per run, with `CONTAINER_TOOL=finch` on a Mac
+- End to end with this machine's own `ssh`: `make test-e2e-native`
 - Lint: `make lint`, with fixes `make lint-fix`
 - Dependencies: `make deps`
 - Run against a sidecar without a cluster: `bin/kubectl-workspace connect --stdio
@@ -150,6 +153,12 @@ cluster-level pieces at the versions pinned in the Makefile; the suite applies
 release the README supports and on the latest (`E2E_OPERATOR_CHART_VERSION`); the
 auth middleware image follows the operator version.
 
+`test/e2e/native` runs the operating system's own `ssh` through the entry
+`ssh-config --write` produces, against an in-process SSH server behind a WebSocket
+bridge standing in for the sidecar and a fake operator granting the connection. It
+runs on Linux, macOS and Windows and is the only check of the entry under Windows
+OpenSSH, which parses the ProxyCommand line itself rather than through a shell.
+
 When adding a test:
 
 - It sits next to the code it pins, in the package's own `_test.go`, and asserts the
@@ -158,7 +167,8 @@ When adding a test:
 - A fake another package will also need goes in `internal/testutil`; a fake one test
   needs stays in that test.
 - A check that needs the real `ssh` belongs in `test/e2e`, one that needs the operator
-  in `test/e2e/kind`.
+  in `test/e2e/kind`, one that needs each operating system's own OpenSSH client in
+  `test/e2e/native`.
 
 ### Before Submitting a PR
 
@@ -168,7 +178,8 @@ When adding a test:
 
 Anything touching signals, process termination or paths is also checked on Linux and
 Windows, not only on a developer Mac: the test workflow runs the unit tests on all
-three, with the Unix-only cases skipped on Windows. The end-to-end rigs run on Linux.
+three, with the Unix-only cases skipped on Windows. The container and Kind suites run
+on Linux; the native OpenSSH suite runs on all three.
 
 ## Automated code review
 
