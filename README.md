@@ -46,8 +46,9 @@ kubectl workspace open <workspace>
 ```
 
 `open` launches a desktop editor on the workspace through VS Code's Remote-SSH link:
-VS Code by default, or Cursor with `--editor cursor`. Either editor needs its Remote-SSH
-extension; Cursor's is `anysphere.remote-ssh`, which a fresh install does not include.
+VS Code by default, Cursor with `--editor cursor`, or Kiro with `--editor kiro`. Each
+editor needs its Remote-SSH extension, which a fresh install of Cursor or Kiro does not
+include: Cursor's is `anysphere.remote-ssh`, Kiro's is `jeanp413.open-remote-ssh`.
 
 ## How it works
 
@@ -119,7 +120,7 @@ Global flags, on every command:
 | `--cluster-name` | the context name | The `<cluster>` label of the alias |
 | `--remote-path` | `/home/jovyan` | Folder to open in the workspace |
 | `--ssh-config-file` | `~/.ssh/config` | The file that must hold the cluster's entry |
-| `--editor` | `vscode` | Editor to open the workspace in: `vscode` or `cursor` |
+| `--editor` | `vscode` | Editor to open the workspace in: `vscode`, `cursor` or `kiro` |
 | `--print-only` | off | Print the link and the `ssh` command instead of launching |
 
 ## Credentials and signing in

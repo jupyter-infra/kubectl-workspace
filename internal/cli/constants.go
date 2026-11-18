@@ -42,5 +42,6 @@ const defaultRemotePath = "/home/jovyan"
 const (
 	editorVSCode  = "vscode"
 	editorCursor  = "cursor"
+	editorKiro    = "kiro"
 	defaultEditor = editorVSCode
 )

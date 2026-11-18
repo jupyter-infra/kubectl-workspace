@@ -32,8 +32,8 @@ the operator's dependency graph out of this binary.
 
 - `cmd/kubectl-workspace`: the entry point; it imports client-go's auth providers.
 - `internal/cli`: the three commands on cobra. `connect` is the ProxyCommand,
-  `ssh-config` the one-time setup, `open` launches the editor, VS Code by default or
-  Cursor. `root.go` holds the shared flags, the `kubectl workspace` usage prefix and
+  `ssh-config` the one-time setup, `open` launches the editor, VS Code by default,
+  Cursor or Kiro. `root.go` holds the shared flags, the `kubectl workspace` usage prefix and
   `Main`, which maps signals and errors to the exit code.
 - `internal/sshconfig`: the alias `<workspace>.<namespace>.<cluster>.jk8s` and the
   per-cluster entry `Host *.<cluster>.jk8s`, rendered between marker comments and
