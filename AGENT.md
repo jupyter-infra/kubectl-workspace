@@ -37,7 +37,9 @@ the operator's dependency graph out of this binary.
   `Main`, which maps signals and errors to the exit code.
 - `internal/sshconfig`: the alias `<workspace>.<namespace>.<cluster>.jk8s` and the
   per-cluster entry `Host *.<cluster>.jk8s`, rendered between marker comments and
-  installed into `~/.ssh/config`.
+  installed into, read back from and removed from `~/.ssh/config`, which a command loads
+  once into a `File`, edits in memory and saves in one replace.
+- `internal/fsutil`: the path helpers the other packages share.
 - `internal/kube`: kubeconfig loading with client-go's `clientcmd`, the exec
   credential plugin run under a deadline, and the `WorkspaceConnection` request to
   the operator's extension API.
@@ -81,7 +83,23 @@ the operator's dependency graph out of this binary.
 - The alias is parsed from the right. The suffix, the cluster and the namespace are
   single labels; the workspace name may contain dots. The kubeconfig context is not
   in the alias, because EKS context names contain `:` and `/`; the entry carries it,
-  and the kubeconfig file when the user chose one.
+  with the kubeconfig file it was found in, since OpenSSH runs the ProxyCommand outside
+  the user's shell session. A context named like an EKS cluster ARN gets the cluster
+  name inside the ARN as its cluster name by default, and `open` and `ssh-config` read
+  the cluster name back from the entry that routes the context in the same kubeconfig
+  file, so a cluster name chosen by hand is typed once, at the first `ssh-config --write`.
+  An entry for the same context name in another file routes another cluster, and
+  neither command connects through it or replaces it under a derived name; an entry
+  naming no file, written by hand or by an earlier build, is read as naming `~/.kube/config`.
+  `ssh-config` and `open` refuse a context whose cluster or user client-go takes from
+  another `KUBECONFIG` file than the context's own (`Target.StandsAlone`), since `connect`
+  reads the entry's file alone; the message names the merge command.
+- Markers pair up or nothing is touched. `Install`, `Remove` and the lookups refuse a
+  file where a cluster's start or end marker is missing, doubled, or encloses another
+  entry's marker, and ask for a repair by hand; a lookup leaves such an entry out, and
+  `--write` and `--remove` report it after acting. A `--write` under a derived cluster
+  name never replaces an entry that routes another context or kubeconfig file; with
+  `--cluster-name` the replacement is deliberate and the changed route is said.
 - The entry goes before the first `Host` or `Match` block and the comment lines directly
   above it, and after everything else above them. A `Host` block runs to the next `Host`
   or `Match`, so an entry placed above a top-level `Include` would capture the included

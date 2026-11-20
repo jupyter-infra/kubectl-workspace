@@ -8,15 +8,18 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/jupyter-infra/kubectl-workspace/internal/testutil"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // runMainEnv makes the test binary run the plugin's Main instead of the tests,
@@ -38,7 +41,34 @@ func TestMain(m *testing.M) {
 	case "fail":
 		os.Exit(3)
 	}
-	os.Exit(m.Run())
+	os.Exit(runWithOwnHome(m))
+}
+
+// runWithOwnHome runs the tests with the home directory pointed at an empty temporary
+// directory: the commands default to ~/.ssh/config and ~/.kube/config, so without it a
+// developer's own entries and contexts would leak into the tests. client-go resolves
+// its default kubeconfig path when its package loads, so it is pointed over as well.
+func runWithOwnHome(m *testing.M) int {
+	home, err := os.MkdirTemp("", "kubectl-workspace-home")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer func() { _ = os.RemoveAll(home) }()
+	for _, name := range []string{"HOME", "USERPROFILE"} {
+		if err := os.Setenv(name, home); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
+	// A developer's KUBECONFIG would point the default lookup elsewhere; tests that
+	// need the variable set it themselves.
+	if err := os.Unsetenv("KUBECONFIG"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	clientcmd.RecommendedHomeFile = filepath.Join(home, clientcmd.RecommendedHomeDir, clientcmd.RecommendedFileName)
+	return m.Run()
 }
 
 // pluginProcess is the plugin running as a ProxyCommand: writes go to its stdin,

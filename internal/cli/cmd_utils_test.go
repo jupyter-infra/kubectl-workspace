@@ -51,7 +51,7 @@ func TestExecutablePathFallsBackToTheBinaryItself(t *testing.T) {
 
 func TestKubectlWorkspaceCommandQuotesForTheShell(t *testing.T) {
 	got := kubectlWorkspaceCommand("open", "/My Files/kubeconfig", "dev", "dev", "ws1")
-	want := `kubectl workspace open ws1 --kubeconfig "/My Files/kubeconfig" --context dev`
+	want := `kubectl workspace open ws1 --kubeconfig "/My Files/kubeconfig" --context dev --cluster-name dev`
 	if got != want {
 		t.Errorf("command = %q, want %q", got, want)
 	}

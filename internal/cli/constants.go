@@ -16,6 +16,13 @@ const goosWindows = "windows"
 // allowPlaintextFlag is the opt-in connect takes and ssh-config writes into the entry.
 const allowPlaintextFlag = "insecure-allow-plaintext"
 
+// writeFlag and removeFlag are ssh-config's install and removal flags, registered and
+// spelled in the hints from here.
+const (
+	writeFlag  = "write"
+	removeFlag = "remove"
+)
+
 // Help texts of the flags that connect, ssh-config and open share.
 const (
 	caFileHelp = "PEM bundle with the certificate authority of the cluster's ingress, " +
@@ -23,7 +30,8 @@ const (
 	credentialTimeoutHelp = "how long connect waits for the kubeconfig's credential plugin"
 	allowPlaintextHelp    = "accept a connection URL without TLS from the operator, for a local cluster; " +
 		"the token then travels in plaintext"
-	clusterNameHelp   = "name of the cluster in the alias (default the context name)"
+	clusterNameHelp = "name of the cluster in the alias (default from the installed entry, else the context name " +
+		"or the cluster name in an EKS ARN)"
 	sshConfigFileHelp = "SSH configuration file (default ~/.ssh/config)"
 )
 

@@ -183,10 +183,28 @@ func TestValidateRejectsLineBreaks(t *testing.T) {
 	if err := entry.Validate(); err == nil || !strings.Contains(err.Error(), "line break") {
 		t.Errorf("Validate() = %v, want a line-break error", err)
 	}
-	if err := Install(filepath.Join(t.TempDir(), "config"), entry); err == nil {
+	if err := install(filepath.Join(t.TempDir(), "config"), entry); err == nil {
 		t.Error("Install accepted an entry that would split into a second directive")
 	}
 	if err := testEntry().Validate(); err != nil {
 		t.Errorf("Validate() on a plain entry = %v", err)
+	}
+}
+
+func TestSplitArgsUndoesTheQuoting(t *testing.T) {
+	values := []string{"plain", "/My Files/kubeconfig", `C:\Users\A Name\kubeconfig`, "a\"quoted\" $HOME", "50%", "--flag"}
+	for _, windows := range []bool{false, true} {
+		var want, quoted []string
+		for _, v := range values {
+			if windows && strings.ContainsAny(v, windowsUnsafe) {
+				continue // Validate refuses these on Windows, so Render never writes them
+			}
+			want = append(want, v)
+			quoted = append(quoted, quoteArg(v, windows))
+		}
+		got := SplitArgs(strings.Join(quoted, " "), windows)
+		if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Errorf("windows=%v: SplitArgs(%q) = %q, want %q", windows, strings.Join(quoted, " "), got, want)
+		}
 	}
 }

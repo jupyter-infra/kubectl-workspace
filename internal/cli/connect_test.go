@@ -168,11 +168,11 @@ func TestConnectFailsFastWhenTheCredentialNeedsASignIn(t *testing.T) {
 		{
 			name:         "context usable as the cluster name",
 			args:         []string{"--context", "dev"},
-			wantOpenHint: openHint + "dev",
-			wantSlowHint: slowHint + "--kubeconfig " + kubeconfig + " --context dev",
+			wantOpenHint: openHint + "dev --cluster-name dev",
+			wantSlowHint: slowHint + "--kubeconfig " + kubeconfig + " --context dev --cluster-name dev",
 		},
 		{
-			name:         "EKS ARN context needs the cluster name",
+			name:         "EKS ARN context derives the cluster name",
 			args:         []string{"--context", testutil.ARNContext},
 			wantOpenHint: openHint + testutil.ARNContext + " --cluster-name dev",
 			wantSlowHint: slowHint + "--kubeconfig " + kubeconfig + " --context " + testutil.ARNContext + " --cluster-name dev",
@@ -181,14 +181,14 @@ func TestConnectFailsFastWhenTheCredentialNeedsASignIn(t *testing.T) {
 		{
 			name:         "CA file carried into the hint",
 			args:         []string{"--context", "dev", "--ca-file", caFile},
-			wantOpenHint: openHint + "dev",
-			wantSlowHint: slowHint + "--ca-file " + caFile + " --kubeconfig " + kubeconfig + " --context dev",
+			wantOpenHint: openHint + "dev --cluster-name dev",
+			wantSlowHint: slowHint + "--ca-file " + caFile + " --kubeconfig " + kubeconfig + " --context dev --cluster-name dev",
 		},
 		{
 			name:         "plaintext opt-in carried into the hint",
 			args:         []string{"--context", "dev", "--insecure-allow-plaintext"},
-			wantOpenHint: openHint + "dev",
-			wantSlowHint: slowHint + "--insecure-allow-plaintext --kubeconfig " + kubeconfig + " --context dev",
+			wantOpenHint: openHint + "dev --cluster-name dev",
+			wantSlowHint: slowHint + "--insecure-allow-plaintext --kubeconfig " + kubeconfig + " --context dev --cluster-name dev",
 		},
 	}
 	for _, tt := range tests {

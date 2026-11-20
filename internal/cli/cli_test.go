@@ -8,6 +8,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -15,6 +16,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/jupyter-infra/kubectl-workspace/internal/testutil"
 )
@@ -57,6 +61,21 @@ var kwCommand = func() string {
 func staticKubeconfig(t *testing.T) string {
 	t.Helper()
 	return testutil.Kubeconfig{Server: "https://127.0.0.1:1", Namespace: "team-a"}.Write(t)
+}
+
+// writeKubeconfigs writes each config into a file of its own and returns the paths in
+// order, for a KUBECONFIG list.
+func writeKubeconfigs(t *testing.T, configs ...*clientcmdapi.Config) []string {
+	t.Helper()
+	dir := t.TempDir()
+	paths := make([]string, len(configs))
+	for i, config := range configs {
+		paths[i] = filepath.Join(dir, fmt.Sprintf("kubeconfig%d", i+1))
+		if err := clientcmd.WriteToFile(*config, paths[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return paths
 }
 
 // operatorKubeconfig writes a kubeconfig whose cluster is the fake operator.

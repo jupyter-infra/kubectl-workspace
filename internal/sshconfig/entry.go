@@ -23,9 +23,9 @@ type Entry struct {
 	Cluster string
 	// Context is the kubeconfig context connect uses for this cluster.
 	Context string
-	// Kubeconfig is the kubeconfig file connect reads, empty for the default
-	// lookup. OpenSSH does not run the ProxyCommand in the user's shell session,
-	// so a file chosen through a flag or KUBECONFIG has to be named here.
+	// Kubeconfig is the kubeconfig file connect reads, the one the context was found in.
+	// OpenSSH runs the ProxyCommand outside the user's shell session, so the file is named
+	// rather than left to KUBECONFIG; empty leaves the flag out.
 	Kubeconfig string
 	// Command is the path of the kubectl-workspace binary.
 	Command string
@@ -113,11 +113,14 @@ func (e Entry) Render() string {
 	return b.String()
 }
 
-const startMarkerPrefix = "# kubectl-workspace: start "
+const (
+	startMarkerPrefix = "# kubectl-workspace: start "
+	endMarkerPrefix   = "# kubectl-workspace: end "
+)
 
 func startMarker(cluster string) string { return startMarkerPrefix + cluster }
 
-func endMarker(cluster string) string { return "# kubectl-workspace: end " + cluster }
+func endMarker(cluster string) string { return endMarkerPrefix + cluster }
 
 // plainArg matches arguments the shell passes through unchanged.
 var plainArg = regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,-]+$`)
@@ -150,4 +153,41 @@ func WindowsQuote(s string) string {
 		return `"` + s + `"`
 	}
 	return s
+}
+
+// SplitArgs splits a rendered ProxyCommand line back into the arguments Render
+// quoted: double quotes group a value, a backslash escapes the next byte inside them
+// in ShellQuote's form while WindowsQuote keeps backslashes, and a doubled percent
+// sign is one again.
+func SplitArgs(line string, windows bool) []string {
+	var words []string
+	var current strings.Builder
+	inWord, quoted := false, false
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quoted && !windows && c == '\\' && i+1 < len(line):
+			i++
+			current.WriteByte(line[i])
+		case c == '"':
+			quoted = !quoted
+			inWord = true
+		case !quoted && (c == ' ' || c == '\t'):
+			if inWord {
+				words = append(words, current.String())
+				current.Reset()
+				inWord = false
+			}
+		default:
+			current.WriteByte(c)
+			inWord = true
+		}
+	}
+	if inWord {
+		words = append(words, current.String())
+	}
+	for i, w := range words {
+		words[i] = strings.ReplaceAll(w, "%%", "%")
+	}
+	return words
 }

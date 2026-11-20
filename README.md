@@ -29,15 +29,20 @@ It adds one entry to `~/.ssh/config`:
 # kubectl-workspace: start <cluster>
 Host *.<cluster>.jk8s
   User jovyan
-  ProxyCommand /path/to/kubectl-workspace connect --stdio --context <context> %h
+  ProxyCommand /path/to/kubectl-workspace connect --stdio --kubeconfig <kubeconfig> --context <context> %h
   ServerAliveInterval 30
   StrictHostKeyChecking accept-new
 # kubectl-workspace: end <cluster>
 ```
 
-`<cluster>` is the context name; pass `--cluster-name` when the context is named
-like an EKS ARN, which cannot be part of a host name. Running the command again
-replaces the entry. From then on every workspace in the cluster is an SSH host:
+`<cluster>` is the context name, lowercased. A context named like an EKS cluster ARN
+cannot be a host-name label, so the cluster name inside the ARN serves instead, lowercased as well;
+`--cluster-name` picks another name, and later commands read it back from the entry,
+so it is typed once. Running the command again replaces the entry for the same
+cluster name, and `--remove` deletes it. `<kubeconfig>` is the file the context was found
+in, through `--kubeconfig`, `KUBECONFIG` or the default `~/.kube/config`; the entry names it
+because OpenSSH runs the ProxyCommand outside your shell session, where `KUBECONFIG` may
+not be set. From then on every workspace in the cluster is an SSH host:
 
 ```
 ssh <workspace>.<namespace>.<cluster>.jk8s
@@ -63,7 +68,7 @@ extension; Cursor's is `anysphere.remote-ssh`, which a fresh install does not in
                           ws-proxy sidecar --> remote-access-server (SSH) inside the workspace pod
 ```
 
-1. `connect` parses the alias, loads the kubeconfig context named in the entry and
+1. `connect` parses the alias, loads the kubeconfig context from the file named in the entry and
    resolves its credential, running an exec credential plugin itself when the
    kubeconfig has one.
 2. It asks the operator's extension API for an `ssh-over-websocket` connection. The
@@ -98,13 +103,14 @@ Global flags, on every command:
 | `--ca-file` | system roots | PEM bundle of the ingress certificate authority, see Private certificate authorities |
 | `--insecure-allow-plaintext` | off | Accept a connection URL without TLS from the operator, for a local cluster; the token then travels in plaintext. The operator today always returns `wss` |
 
-`kubectl workspace ssh-config [--write]`, the one-time setup:
+`kubectl workspace ssh-config [--write | --remove]`, the one-time setup:
 
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--write` | off | Install the entry into the SSH configuration file; without it the entry is printed |
-| `--cluster-name` | the context name | The `<cluster>` label of the aliases |
-| `--ssh-config-file` | `~/.ssh/config` | The file to install into |
+| `--remove` | off | Remove the entry installed for the context, or the one `--cluster-name` names |
+| `--cluster-name` | from the installed entry, else the context name or the cluster name in an EKS ARN | The `<cluster>` part of the aliases |
+| `--ssh-config-file` | `~/.ssh/config` | The SSH configuration file |
 | `--command` | this binary | Path or name of `kubectl-workspace` for the ProxyCommand |
 | `--user` | `jovyan` | SSH user name in the entry |
 | `--credential-timeout` | `5s` | Written into the entry when it differs from the default |
@@ -116,7 +122,7 @@ Global flags, on every command:
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `-n`, `--namespace` | the context's | Namespace of the workspace |
-| `--cluster-name` | the context name | The `<cluster>` label of the alias |
+| `--cluster-name` | from the installed entry, else the context name or the cluster name in an EKS ARN | The `<cluster>` part of the alias |
 | `--remote-path` | `/home/jovyan` | Folder to open in the workspace |
 | `--ssh-config-file` | `~/.ssh/config` | The file that must hold the cluster's entry |
 | `--editor` | `vscode` | Editor to open the workspace in: `vscode` or `cursor` |
