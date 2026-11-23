@@ -45,7 +45,7 @@ func TestOpenPrintOnlyPrintsTheLinkAndTheSSHCommand(t *testing.T) {
 
 func TestOpenBuildsTheLinkForTheChosenEditor(t *testing.T) {
 	kubeconfig := staticKubeconfig(t)
-	for _, editor := range []string{"vscode", "cursor"} {
+	for _, editor := range []string{"vscode", "cursor", "kiro"} {
 		stdout, err := run(t, "open", "--kubeconfig", kubeconfig, "--print-only", "--editor", editor, "ws1")
 		if err != nil {
 			t.Fatal(err)
@@ -56,7 +56,7 @@ func TestOpenBuildsTheLinkForTheChosenEditor(t *testing.T) {
 		}
 	}
 	_, err := run(t, "open", "--kubeconfig", kubeconfig, "--print-only", "--editor", "emacs", "ws1")
-	if err == nil || !strings.Contains(err.Error(), `unknown --editor "emacs", supported: vscode, cursor`) {
+	if err == nil || !strings.Contains(err.Error(), `unknown --editor "emacs", supported: vscode, cursor, kiro`) {
 		t.Errorf("error = %v, want the supported editors listed", err)
 	}
 }
@@ -188,6 +188,10 @@ func TestOpenChecksTheConnectionThenLaunchesTheEditor(t *testing.T) {
 		{
 			name: "Cursor when asked", args: []string{"--editor", "cursor"}, wantName: "Opening Cursor on",
 			wantLink: "cursor://vscode-remote/ssh-remote+" + alias + "/home/jovyan?windowId=_blank",
+		},
+		{
+			name: "Kiro when asked", args: []string{"--editor", "kiro"}, wantName: "Opening Kiro on",
+			wantLink: "kiro://vscode-remote/ssh-remote+" + alias + "/home/jovyan?windowId=_blank",
 		},
 	}
 	for _, tt := range tests {

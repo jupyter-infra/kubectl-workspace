@@ -30,16 +30,18 @@ type openOptions struct {
 }
 
 // editorFor resolves an --editor value to the editor's display name. Each value
-// is also the editor's URL scheme: a fork of VS Code that ships Remote-SSH opens VS
-// Code's link under its own scheme.
+// is also the editor's URL scheme: Cursor and Kiro open VS Code's link under their
+// own schemes.
 func editorFor(value string) (string, error) {
 	switch value {
 	case editorVSCode:
 		return "VS Code", nil
 	case editorCursor:
 		return "Cursor", nil
+	case editorKiro:
+		return "Kiro", nil
 	}
-	return "", fmt.Errorf("unknown --editor %q, supported: %s, %s", value, editorVSCode, editorCursor)
+	return "", fmt.Errorf("unknown --editor %q, supported: %s, %s, %s", value, editorVSCode, editorCursor, editorKiro)
 }
 
 func newOpenCommand(root *rootOptions) *cobra.Command {
@@ -63,7 +65,7 @@ editor's connection timeout.`,
 	cmd.Flags().StringVar(&o.sshConfigFile, "ssh-config-file", "", sshConfigFileHelp)
 	cmd.Flags().BoolVar(&o.printOnly, "print-only", false, "print the link and the ssh command instead of launching")
 	cmd.Flags().StringVar(&o.editor, "editor", defaultEditor,
-		"editor to open the workspace in: "+editorVSCode+" or "+editorCursor)
+		"editor to open the workspace in: "+editorVSCode+", "+editorCursor+" or "+editorKiro)
 	return cmd
 }
 
